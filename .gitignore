@@ -1,0 +1,15 @@
+data/
+芯影天线/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.log
+.superpowers/
