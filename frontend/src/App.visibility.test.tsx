@@ -208,8 +208,8 @@ describe('App mmWave detail panel visibility', () => {
       new Response(
         JSON.stringify({
           images: [
-            createImageRecord('image-1', 'b-sample.png', 82.5),
-            createImageRecord('image-2', 'a-sample.png', 91.2),
+            createImageRecord('image-1', 'a-sample.png', 82.5),
+            createImageRecord('image-2', 'b-sample.png', 91.2),
           ],
           weights: {},
         }),
@@ -224,9 +224,32 @@ describe('App mmWave detail panel visibility', () => {
       createRoot(rootElement).render(<App />);
     });
 
+    const scoreSortButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('按得分'));
+    const nameSortButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('按名称'));
+    const settingsButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('设置'));
+    const summaryValues = Array.from(document.querySelectorAll('.summary-strip .metric-tile strong'));
+
     expect(document.body.textContent).toContain('按得分');
     expect(document.body.textContent).toContain('按名称');
     expect(document.body.textContent).toContain('设置');
+    expect(scoreSortButton?.className).toContain('active');
+    expect(nameSortButton?.className).not.toContain('active');
+    expect(summaryValues[2]?.textContent).toBe('91.20');
+
+    await act(async () => {
+      settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.getElementById('topbar-settings-panel')).toBeTruthy();
+    expect(document.body.textContent).toContain('聚焦当前样本');
+
+    await act(async () => {
+      nameSortButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(nameSortButton?.className).toContain('active');
+    expect(scoreSortButton?.className).not.toContain('active');
+    expect(summaryValues[2]?.textContent).toBe('91.20');
   });
 });
 

@@ -23,8 +23,10 @@ type OverlayMode = 'none' | 'aoi' | 'leakage' | 'stripe';
 type SampleSortMode = 'score' | 'name';
 
 type SampleRow = {
+  id: string;
   label: string;
-  image: ImageRecord;
+  importEntry?: ImportEntry;
+  image?: ImageRecord;
 };
 
 type RawMetricRow = {
@@ -167,6 +169,31 @@ function findCalculatedImageForImportEntry(entry: ImportEntry | undefined, image
   return images.find((image) => basename(image.filename) === entryName);
 }
 
+function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): SampleRow[] {
+  const matchedImageIds = new Set<string>();
+
+  const importRows = importEntries.map((entry) => {
+    const image = findCalculatedImageForImportEntry(entry, images);
+    if (image) matchedImageIds.add(image.id);
+    return {
+      id: entry.id,
+      label: entry.displayPath,
+      importEntry: entry,
+      image,
+    };
+  });
+
+  const imageRows = images
+    .filter((image) => !matchedImageIds.has(image.id))
+    .map((image) => ({
+      id: image.id,
+      label: image.filename,
+      image,
+    }));
+
+  return [...importRows, ...imageRows];
+}
+
 function App() {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -201,8 +228,8 @@ function App() {
 
   const selected = useMemo(() => images.find((image) => image.id === selectedId) ?? images[0], [images, selectedId]);
   const sampleRows = useMemo<SampleRow[]>(
-    () => images.map((image) => ({ label: image.filename, image })),
-    [images],
+    () => buildSampleRows(importEntries, images),
+    [images, importEntries],
   );
   const orderedRows = useMemo(() => {
     return [...sampleRows].sort((left, right) => {
@@ -216,12 +243,16 @@ function App() {
     () => (focusCurrentOnly && selectedId ? orderedRows.filter((row) => row.image?.id === selectedId) : orderedRows),
     [focusCurrentOnly, orderedRows, selectedId],
   );
+  const rankedRows = useMemo(
+    () => visibleRows.filter((row): row is SampleRow & { image: ImageRecord } => Boolean(row.image)),
+    [visibleRows],
+  );
   const summary = useMemo(() => {
     const count = images.length;
     const avg = count ? images.reduce((sum, image) => sum + image.quality_score, 0) / count : 0;
-    const best = orderedRows[0]?.image?.quality_score ?? 0;
+    const best = count ? images.reduce((max, image) => Math.max(max, image.quality_score), Number.NEGATIVE_INFINITY) : 0;
     return { count, avg, best };
-  }, [images, orderedRows]);
+  }, [images]);
   const importSummary = useMemo(() => summarizeImportSelection(importEntries), [importEntries]);
   const selectedImportEntry = importEntries[selectedImportIndex] ?? importEntries[0];
   const selectedImportEntries = useMemo(() => getSelectedImportEntries(importEntries, selectedImportIds), [importEntries, selectedImportIds]);
@@ -576,11 +607,11 @@ function App() {
                         按名称
                       </button>
                     </div>
-                    <span>{visibleRows.length} 张</span>
+                    <span>{rankedRows.length} 张</span>
                   </div>
                 </div>
                 <div className="tiles ranking-tiles">
-                  {visibleRows.map(({ image }, index) => (
+                  {rankedRows.map(({ image }, index) => (
                     <div className="ranking-tile-shell" key={image.id}>
                       <button
                         type="button"
