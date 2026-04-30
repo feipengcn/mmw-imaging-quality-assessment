@@ -228,6 +228,7 @@ describe('App mmWave detail panel visibility', () => {
     const nameSortButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('按名称'));
     const settingsButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('设置'));
     const summaryValues = Array.from(document.querySelectorAll('.summary-strip .metric-tile strong'));
+    const rankedTileTitles = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));
 
     expect(document.body.textContent).toContain('按得分');
     expect(document.body.textContent).toContain('按名称');
@@ -235,6 +236,7 @@ describe('App mmWave detail panel visibility', () => {
     expect(scoreSortButton?.className).toContain('active');
     expect(nameSortButton?.className).not.toContain('active');
     expect(summaryValues[2]?.textContent).toBe('91.20');
+    expect(rankedTileTitles[0]?.textContent).toBe('b-sample.png');
 
     await act(async () => {
       settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));

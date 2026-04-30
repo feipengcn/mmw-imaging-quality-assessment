@@ -24,6 +24,7 @@ type SampleSortMode = 'score' | 'name';
 
 type SampleRow = {
   id: string;
+  importIndex: number;
   label: string;
   importEntry?: ImportEntry;
   image?: ImageRecord;
@@ -172,11 +173,12 @@ function findCalculatedImageForImportEntry(entry: ImportEntry | undefined, image
 function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): SampleRow[] {
   const matchedImageIds = new Set<string>();
 
-  const importRows = importEntries.map((entry) => {
+  const importRows = importEntries.map((entry, importIndex) => {
     const image = findCalculatedImageForImportEntry(entry, images);
     if (image) matchedImageIds.add(image.id);
     return {
       id: entry.id,
+      importIndex,
       label: entry.displayPath,
       importEntry: entry,
       image,
@@ -185,8 +187,9 @@ function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): S
 
   const imageRows = images
     .filter((image) => !matchedImageIds.has(image.id))
-    .map((image) => ({
+    .map((image, imageIndex) => ({
       id: image.id,
+      importIndex: importEntries.length + imageIndex,
       label: image.filename,
       image,
     }));
