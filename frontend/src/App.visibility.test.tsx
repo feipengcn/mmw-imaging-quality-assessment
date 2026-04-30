@@ -40,11 +40,36 @@ describe('App mmWave detail panel visibility', () => {
     });
 
     expect(document.body.textContent).toContain('质量雷达图');
-    expect(document.body.textContent).toContain('样本排名');
+    expect(document.body.textContent).toContain('样本列表');
     expect(document.body.textContent).toContain('AOI');
     expect(document.body.textContent).toContain('伪影溢出带');
     expect(document.body.textContent).toContain('饱和条纹区');
     expect(document.body.textContent).not.toContain('人工打分');
+  });
+
+  it('uses the left sample list as the only ranked browsing surface', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [
+            createImageRecord('image-1', 'sample-b.png', 82.5),
+            createImageRecord('image-2', 'sample-a.png', 91.2),
+          ],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    expect(document.body.textContent).not.toContain('样本排名');
+    expect(document.body.textContent).toContain('样本列表');
   });
 
   it('removes metadata inputs from the import sidebar', async () => {

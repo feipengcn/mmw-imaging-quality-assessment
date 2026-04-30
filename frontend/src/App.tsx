@@ -529,6 +529,61 @@ function App() {
             {message && <p className="status-line">{message}</p>}
           </form>
 
+          <section className="sample-list">
+            <div className="section-heading compact-heading">
+              <div>
+                <h2>样本列表</h2>
+                <span>按综合质量分从高到低排序，直接在左侧浏览和切换当前样本。</span>
+              </div>
+              <div className="sample-list-toolbar">
+                <div className="segmented-control" role="tablist" aria-label="样本列表">
+                  <button type="button" className={sampleSortMode === 'score' ? 'active' : ''} onClick={() => setSampleSortMode('score')}>
+                    按得分
+                  </button>
+                  <button type="button" className={sampleSortMode === 'name' ? 'active' : ''} onClick={() => setSampleSortMode('name')}>
+                    按名称
+                  </button>
+                </div>
+                <span>{rankedRows.length} 张</span>
+              </div>
+            </div>
+            <div className="tiles ranking-tiles">
+              {rankedRows.map(({ image }, index) => (
+                <div className="ranking-tile-shell" key={image.id}>
+                  <button
+                    type="button"
+                    className="tile-delete-button"
+                    aria-label={`删除 ${image.filename}`}
+                    onClick={() => void handleDeleteImage(image)}
+                    disabled={busy}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                  <div
+                    className={`image-tile ${image.id === selected?.id ? 'active' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedId(image.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedId(image.id);
+                      }
+                    }}
+                  >
+                    <img src={image.image_url} alt={image.filename} />
+                    <RadarSpark image={image} />
+                    <span className="rank">#{index + 1}</span>
+                    <span className="score">{image.quality_score.toFixed(1)}</span>
+                    <strong>{image.filename}</strong>
+                    <small>{formatView(image.view)} 路 {formatConfidence(image.view_confidence)}</small>
+                    <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '链路有效' : '链路无效'}</small>
+                  </div>
+                </div>
+              ))}
+              {images.length === 0 && <div className="empty-state">等待计算图像</div>}
+            </div>
+          </section>
           <section className="weights">
             <div className="panel-title">
               <SlidersHorizontal size={18} />
@@ -602,61 +657,6 @@ function App() {
                 <div className="empty-state visual-empty">等待计算图像</div>
               )}
 
-              <section className="embedded-ranking">
-                <div className="section-heading compact-heading">
-                  <div>
-                    <h2>样本排名</h2>
-                    <span>按综合质量分从高到低排序，面积更大的雷达图代表五维表现更均衡。</span>
-                  </div>
-                  <div className="sample-list-toolbar">
-                    <div className="segmented-control" role="tablist" aria-label="样本排序">
-                      <button type="button" className={sampleSortMode === 'score' ? 'active' : ''} onClick={() => setSampleSortMode('score')}>
-                        按得分
-                      </button>
-                      <button type="button" className={sampleSortMode === 'name' ? 'active' : ''} onClick={() => setSampleSortMode('name')}>
-                        按名称
-                      </button>
-                    </div>
-                    <span>{rankedRows.length} 张</span>
-                  </div>
-                </div>
-                <div className="tiles ranking-tiles">
-                  {rankedRows.map(({ image }, index) => (
-                    <div className="ranking-tile-shell" key={image.id}>
-                      <button
-                        type="button"
-                        className="tile-delete-button"
-                        aria-label={`删除 ${image.filename}`}
-                        onClick={() => void handleDeleteImage(image)}
-                        disabled={busy}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                      <div
-                        className={`image-tile ${image.id === selected?.id ? 'active' : ''}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setSelectedId(image.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            setSelectedId(image.id);
-                          }
-                        }}
-                      >
-                        <img src={image.image_url} alt={image.filename} />
-                        <RadarSpark image={image} />
-                        <span className="rank">#{index + 1}</span>
-                        <span className="score">{image.quality_score.toFixed(1)}</span>
-                        <strong>{image.filename}</strong>
-                        <small>{formatView(image.view)} · {formatConfidence(image.view_confidence)}</small>
-                        <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '有效样本' : '无效样本'}</small>
-                      </div>
-                    </div>
-                  ))}
-                  {images.length === 0 && <div className="empty-state">等待计算图像</div>}
-                </div>
-              </section>
             </section>
 
             <section className="detail-panel">
