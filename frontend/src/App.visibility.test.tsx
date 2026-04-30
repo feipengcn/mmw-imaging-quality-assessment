@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App';
+import App, { buildSampleRows } from './App';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as typeof globalThis & { ResizeObserver?: typeof ResizeObserver }).ResizeObserver = class {
@@ -68,6 +68,7 @@ describe('App mmWave detail panel visibility', () => {
       createRoot(rootElement).render(<App />);
     });
 
+    expect(document.querySelector('.embedded-ranking')).toBeNull();
     expect(document.querySelector('.import-file-list')).toBeNull();
     expect(document.body.textContent).toContain('样本列表');
 
@@ -144,7 +145,7 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.body.textContent).toContain('等待计算图像');
   });
 
-  it('switches the observation image when a calculated file is clicked in the pending file list', async () => {
+  it('switches the observation image when a calculated file is clicked in the unified sample list', async () => {
     Object.defineProperty(globalThis.URL, 'createObjectURL', {
       value: vi.fn(() => 'blob:preview'),
       configurable: true,
@@ -183,7 +184,7 @@ describe('App mmWave detail panel visibility', () => {
 
     expect(document.querySelector('.visual-panel h2')?.textContent).toBe('example_pic/1000_front.png');
 
-    const secondRow = Array.from(document.querySelectorAll('.import-file-row')).find((row) => row.textContent?.includes('example_pic/1093_front.png'));
+    const secondRow = Array.from(document.querySelectorAll('.sample-list .image-tile')).find((row) => row.textContent?.includes('example_pic/1093_front.png'));
     expect(secondRow).toBeTruthy();
 
     await act(async () => {
@@ -191,6 +192,54 @@ describe('App mmWave detail panel visibility', () => {
     });
 
     expect(document.querySelector('.visual-panel h2')?.textContent).toBe('example_pic/1093_front.png');
+    expect(document.querySelectorAll('.sample-list .image-tile.active')).toHaveLength(1);
+  });
+
+  it('keeps unmatched pending rows from reusing an unrelated calculated image', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [createImageRecord('image-1', 'sample-a.png', 88.4)],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const unmatchedFile = createImportFile('sample-b.png', 'pending/sample-b.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [unmatchedFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const pendingRow = Array.from(document.querySelectorAll('.sample-list .image-tile')).find((row) =>
+      row.textContent?.includes('pending/sample-b.png'),
+    );
+    expect(pendingRow).toBeTruthy();
+
+    await act(async () => {
+      pendingRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.querySelectorAll('.sample-list .image-tile.active')).toHaveLength(1);
+    expect(document.querySelector('.visual-panel h2')?.textContent).toBe('等待计算图像');
+    expect(document.querySelector('.big-score')?.textContent).toBe('--');
   });
 
   it('deletes a ranked image on demand', async () => {
@@ -290,7 +339,13 @@ describe('App mmWave detail panel visibility', () => {
     expect(scoreSortButton?.className).toContain('active');
     expect(nameSortButton?.className).not.toContain('active');
     expect(summaryValues[2]?.textContent).toBe('91.20');
-    expect(rankedTileTitles[0]?.textContent).toBe('b-sample.png');
+    expect(rankedTileTitles[0]?.textContent).toBe('a-dir/b-sample.png');
+
+    const scoredImportedRow = Array.from(document.querySelectorAll('.ranking-tile-shell')).find((row) =>
+      row.textContent?.includes('a-dir/b-sample.png'),
+    );
+    expect(scoredImportedRow?.querySelector('input[type="checkbox"]')).toBeTruthy();
+    expect(scoredImportedRow?.querySelector('.score')?.textContent).toBe('91.2');
 
     await act(async () => {
       settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -307,7 +362,7 @@ describe('App mmWave detail panel visibility', () => {
     expect(nameSortButton?.className).toContain('active');
     expect(scoreSortButton?.className).not.toContain('active');
     expect(summaryValues[2]?.textContent).toBe('91.20');
-    expect(rankedTileTitlesAfterNameSort[0]?.textContent).toBe('a-sample.png');
+    expect(rankedTileTitlesAfterNameSort[0]?.textContent).toBe('z-dir/a-sample.png');
   });
 
   it('focuses the ranked list on the current sample when enabled', async () => {
@@ -324,7 +379,7 @@ describe('App mmWave detail panel visibility', () => {
         JSON.stringify({
           images: [
             createImageRecord('image-1', 'dup-sample.png', 91.2),
-            createImageRecord('image-2', 'other-sample.png', 82.5),
+            createImageRecord('image-2', 'dup-sample.png', 82.5),
           ],
           weights: {},
         }),
@@ -351,6 +406,18 @@ describe('App mmWave detail panel visibility', () => {
     const settingsButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('设置'));
     expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(2);
 
+    const secondDuplicateRow = Array.from(document.querySelectorAll('.ranking-tiles .image-tile')).find((row) =>
+      row.textContent?.includes('second-dir/dup-sample.png'),
+    );
+    expect(secondDuplicateRow).toBeTruthy();
+
+    await act(async () => {
+      secondDuplicateRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.querySelectorAll('.ranking-tiles .image-tile.active')).toHaveLength(1);
+    expect(document.querySelector('.big-score')?.textContent).toBe('82.50');
+
     await act(async () => {
       settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -364,7 +431,161 @@ describe('App mmWave detail panel visibility', () => {
 
     const rankedTileTitles = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));
     expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(1);
-    expect(rankedTileTitles[0]?.textContent).toBe('dup-sample.png');
+    expect(rankedTileTitles[0]?.textContent).toBe('second-dir/dup-sample.png');
+    expect(document.querySelector('.big-score')?.textContent).toBe('82.50');
+  });
+
+  it('falls forward to the next matched row after deleting an exact-path match', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (input === '/api/images/image-1' && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              images: [createImageRecord('image-2', 'dup-sample.png', 82.5)],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            images: [
+              createImageRecord('image-2', 'dup-sample.png', 82.5),
+              createImageRecord('image-1', 'first-dir/dup-sample.png', 91.2),
+            ],
+            weights: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+    });
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('dup-sample.png', 'first-dir/dup-sample.png');
+    const secondFile = createImportFile('dup-sample.png', 'second-dir/dup-sample.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const exactPathRow = Array.from(document.querySelectorAll('.ranking-tiles .image-tile')).find((row) =>
+      row.textContent?.includes('first-dir/dup-sample.png'),
+    );
+    expect(exactPathRow).toBeTruthy();
+
+    await act(async () => {
+      exactPathRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.querySelector('.big-score')?.textContent).toBe('91.20');
+
+    const deleteButton = document.querySelector('[aria-label="删除 first-dir/dup-sample.png"]');
+    expect(deleteButton).toBeTruthy();
+
+    await act(async () => {
+      deleteButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-1', { method: 'DELETE' });
+    expect(document.querySelector('.big-score')?.textContent).toBe('82.50');
+    expect(document.querySelectorAll('.ranking-tiles .image-tile.active')).toHaveLength(1);
+    expect(document.querySelector('.visual-panel h2')?.textContent).toBe('dup-sample.png');
+    expect(document.querySelector('.ranking-tiles .image-tile.active strong')?.textContent).toBe('second-dir/dup-sample.png');
+  });
+
+  it('preserves later exact-path matches ahead of earlier basename fallbacks', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [
+            createImageRecord('image-1', '1-real/dup.png', 91.2),
+            createImageRecord('image-2', 'dup.png', 82.5),
+          ],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('dup.png', '0-mismatch/dup.png');
+    const secondFile = createImportFile('dup.png', '1-real/dup.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const exactPathRow = Array.from(document.querySelectorAll('.ranking-tiles .image-tile')).find((row) =>
+      row.textContent?.includes('1-real/dup.png'),
+    );
+    expect(exactPathRow).toBeTruthy();
+
+    await act(async () => {
+      exactPathRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.querySelector('.big-score')?.textContent).toBe('91.20');
+  });
+
+  it('upgrades a previous basename binding when an exact-path match appears after refresh', () => {
+    const firstRows = buildSampleRows(
+      [
+        createImportEntry('0-mismatch/dup.png'),
+        createImportEntry('1-real/dup.png'),
+      ],
+      [createImageRecord('image-1', 'dup.png', 82.5)],
+      new Map(),
+    );
+
+    const refreshedRows = buildSampleRows(
+      [
+        createImportEntry('0-mismatch/dup.png'),
+        createImportEntry('1-real/dup.png'),
+      ],
+      [
+        createImageRecord('image-1', '1-real/dup.png', 91.2),
+        createImageRecord('image-2', 'dup.png', 82.5),
+      ],
+      firstRows.bindings,
+    );
+
+    expect(firstRows.rows[0]?.image?.filename).toBe('dup.png');
+    expect(firstRows.rows[1]?.image).toBeUndefined();
+    expect(refreshedRows.rows[0]?.image?.filename).toBe('dup.png');
+    expect(refreshedRows.rows[1]?.image?.filename).toBe('1-real/dup.png');
+    expect(refreshedRows.rows[1]?.image?.quality_score).toBe(91.2);
   });
 });
 
@@ -444,4 +665,17 @@ function createImportFile(name: string, displayPath: string) {
   const file = new File(['image'], name, { type: 'image/png', lastModified: 1 });
   Object.defineProperty(file, 'webkitRelativePath', { value: displayPath, configurable: true });
   return file;
+}
+
+function createImportEntry(displayPath: string) {
+  const name = displayPath.split('/').pop() ?? displayPath;
+  const extension = name.includes('.') ? `.${name.split('.').pop()}` : '';
+  return {
+    id: displayPath,
+    file: createImportFile(name, displayPath),
+    displayPath,
+    name,
+    extension,
+    size: 128,
+  };
 }

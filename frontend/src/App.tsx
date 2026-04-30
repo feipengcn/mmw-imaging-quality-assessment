@@ -1,4 +1,4 @@
-import { FormEvent, InputHTMLAttributes, KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImages } from './api';
@@ -6,7 +6,6 @@ import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, nor
 import {
   filesToImportEntries,
   formatBytes,
-  getNextImportSelectionIndex,
   getSelectedImportEntries,
   summarizeImportSelection,
   type ImportEntry,
@@ -162,21 +161,82 @@ function basename(path: string): string {
   return normalizeDisplayPath(path).split('/').pop() ?? '';
 }
 
-function findCalculatedImageForImportEntry(entry: ImportEntry | undefined, images: ImageRecord[]): ImageRecord | undefined {
-  if (!entry) return undefined;
-  const entryPath = normalizeDisplayPath(entry.displayPath);
-  const exactMatch = images.find((image) => normalizeDisplayPath(image.filename) === entryPath);
-  if (exactMatch) return exactMatch;
-  const entryName = basename(entry.displayPath);
-  return images.find((image) => basename(image.filename) === entryName);
-}
-
-function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): SampleRow[] {
+export function buildSampleRows(
+  importEntries: ImportEntry[],
+  images: ImageRecord[],
+  previousBindings: Map<string, string>,
+): { rows: SampleRow[]; bindings: Map<string, string> } {
   const matchedImageIds = new Set<string>();
+  const imagesByPath = new Map<string, ImageRecord[]>();
+  const imagesByName = new Map<string, ImageRecord[]>();
+  const imagesById = new Map<string, ImageRecord>();
+  const matchedImagesByEntryId = new Map<string, ImageRecord | undefined>();
+  const nextBindings = new Map<string, string>();
+
+  images.forEach((image) => {
+    const imagePath = normalizeDisplayPath(image.filename);
+    const imageName = basename(image.filename);
+    imagesById.set(image.id, image);
+    imagesByPath.set(imagePath, [...(imagesByPath.get(imagePath) ?? []), image]);
+    imagesByName.set(imageName, [...(imagesByName.get(imageName) ?? []), image]);
+  });
+
+  function isExactPathMatch(entry: ImportEntry, image: ImageRecord): boolean {
+    const entryPath = normalizeDisplayPath(entry.displayPath);
+    return normalizeDisplayPath(image.filename) === entryPath;
+  }
+
+  function isBasenameMatch(entry: ImportEntry, image: ImageRecord): boolean {
+    return basename(image.filename) === basename(entry.displayPath);
+  }
+
+  function assignImage(entry: ImportEntry, image: ImageRecord | undefined) {
+    if (!image || matchedImageIds.has(image.id)) return;
+    matchedImageIds.add(image.id);
+    matchedImagesByEntryId.set(entry.id, image);
+    nextBindings.set(entry.id, image.id);
+  }
+
+  function takeExactMatch(entry: ImportEntry): ImageRecord | undefined {
+    const entryPath = normalizeDisplayPath(entry.displayPath);
+    return imagesByPath.get(entryPath)?.find((image) => !matchedImageIds.has(image.id));
+  }
+
+  function takeBasenameMatch(entry: ImportEntry): ImageRecord | undefined {
+    const entryName = basename(entry.displayPath);
+    return imagesByName.get(entryName)?.find((image) => !matchedImageIds.has(image.id));
+  }
+
+  importEntries.forEach((entry) => {
+    const previousImageId = previousBindings.get(entry.id);
+    const previousImage = previousImageId ? imagesById.get(previousImageId) : undefined;
+    if (previousImage && isExactPathMatch(entry, previousImage)) {
+      assignImage(entry, previousImage);
+    }
+  });
+
+  importEntries.forEach((entry) => {
+    if (matchedImagesByEntryId.get(entry.id)) return;
+    const image = takeExactMatch(entry);
+    assignImage(entry, image);
+  });
+
+  importEntries.forEach((entry) => {
+    const previousImageId = previousBindings.get(entry.id);
+    const previousImage = previousImageId ? imagesById.get(previousImageId) : undefined;
+    if (previousImage && isBasenameMatch(entry, previousImage)) {
+      assignImage(entry, previousImage);
+    }
+  });
+
+  importEntries.forEach((entry) => {
+    if (matchedImagesByEntryId.get(entry.id)) return;
+    const image = takeBasenameMatch(entry);
+    assignImage(entry, image);
+  });
 
   const importRows = importEntries.map((entry, importIndex) => {
-    const image = findCalculatedImageForImportEntry(entry, images);
-    if (image) matchedImageIds.add(image.id);
+    const image = matchedImagesByEntryId.get(entry.id);
     return {
       id: entry.id,
       importIndex,
@@ -197,12 +257,13 @@ function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): S
       image,
     }));
 
-  return [...importRows, ...imageRows];
+  return { rows: [...importRows, ...imageRows], bindings: nextBindings };
 }
 
 function App() {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeSampleRowId, setActiveSampleRowId] = useState<string | null>(null);
   const [sampleSortMode, setSampleSortMode] = useState<SampleSortMode>('score');
   const [focusCurrentOnly, setFocusCurrentOnly] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -215,6 +276,7 @@ function App() {
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const sampleRowBindingsRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     fetchImages()
@@ -227,16 +289,46 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedId && images.length > 0) {
+    if (!selectedId && !activeSampleRowId && images.length > 0) {
       setSelectedId(images[0].id);
     }
-  }, [images, selectedId]);
+  }, [activeSampleRowId, images, selectedId]);
 
-  const selected = useMemo(() => images.find((image) => image.id === selectedId) ?? images[0], [images, selectedId]);
-  const sampleRows = useMemo<SampleRow[]>(
-    () => buildSampleRows(importEntries, images),
+  const sampleRowDerivation = useMemo(
+    () => buildSampleRows(importEntries, images, sampleRowBindingsRef.current),
     [images, importEntries],
   );
+  const sampleRows = sampleRowDerivation.rows;
+
+  useEffect(() => {
+    sampleRowBindingsRef.current = sampleRowDerivation.bindings;
+  }, [sampleRowDerivation]);
+  useEffect(() => {
+    if (sampleRows.length === 0) {
+      setActiveSampleRowId(null);
+      return;
+    }
+
+    setActiveSampleRowId((current) => {
+      if (current) {
+        const currentRow = sampleRows.find((row) => row.id === current);
+        if (currentRow && (currentRow.image || !selectedId)) return current;
+      }
+      if (selectedId) {
+        const matchedRow = sampleRows.find((row) => row.image?.id === selectedId);
+        if (matchedRow) return matchedRow.id;
+      }
+      return sampleRows[0].id;
+    });
+  }, [sampleRows, selectedId]);
+
+  const selected = useMemo(() => {
+    if (activeSampleRowId) {
+      const activeRow = sampleRows.find((row) => row.id === activeSampleRowId);
+      if (activeRow) return activeRow.image;
+    }
+    return selectedId ? images.find((image) => image.id === selectedId) ?? images[0] : undefined;
+  }, [activeSampleRowId, images, sampleRows, selectedId]);
   const orderedRows = useMemo(() => {
     return [...sampleRows].sort((left, right) => {
       if (sampleSortMode === 'name') {
@@ -245,18 +337,10 @@ function App() {
       return (right.image?.quality_score ?? -1) - (left.image?.quality_score ?? -1);
     });
   }, [sampleRows, sampleSortMode]);
-  const visibleRows = useMemo(
-    () => (focusCurrentOnly && selectedId ? orderedRows.filter((row) => row.image?.id === selectedId) : orderedRows),
-    [focusCurrentOnly, orderedRows, selectedId],
-  );
-  const rankedRows = useMemo(() => {
-    const seenImageIds = new Set<string>();
-    return visibleRows.filter((row): row is SampleRow & { image: ImageRecord } => {
-      if (!row.image || seenImageIds.has(row.image.id)) return false;
-      seenImageIds.add(row.image.id);
-      return true;
-    });
-  }, [visibleRows]);
+  const visibleRows = useMemo(() => {
+    if (!focusCurrentOnly || !activeSampleRowId) return orderedRows;
+    return orderedRows.filter((row) => row.id === activeSampleRowId);
+  }, [activeSampleRowId, focusCurrentOnly, orderedRows]);
   const summary = useMemo(() => {
     const count = images.length;
     const avg = count ? images.reduce((sum, image) => sum + image.quality_score, 0) / count : 0;
@@ -359,18 +443,16 @@ function App() {
     setMessage(entries.length ? `已选择 ${entries.length} 个图像文件。` : '没有找到可导入的图像文件。');
   }
 
-  function handleImportListKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const nextIndex = getNextImportSelectionIndex(selectedImportIndex, event.key, importEntries.length);
-    if (nextIndex !== selectedImportIndex) {
-      event.preventDefault();
-      setSelectedImportIndex(nextIndex);
-      selectCalculatedImportEntry(importEntries[nextIndex]);
+  function handleSampleRowSelect(row: SampleRow) {
+    setActiveSampleRowId(row.id);
+    if (row.importEntry) {
+      setSelectedImportIndex(row.importIndex);
     }
-  }
-
-  function selectCalculatedImportEntry(entry: ImportEntry | undefined) {
-    const image = findCalculatedImageForImportEntry(entry, images);
-    if (image) setSelectedId(image.id);
+    if (row.image) {
+      setSelectedId(row.image.id);
+      return;
+    }
+    setSelectedId(null);
   }
 
   function toggleImportEntry(id: string) {
@@ -513,47 +595,56 @@ function App() {
             <div className="tiles ranking-tiles">
               {visibleRows.map((row, index) => {
                 const image = row.image;
-                const isSelected = image ? image.id === selected?.id : row.importEntry?.id === selectedImportEntry?.id;
-                const isImportChecked = row.importEntry ? selectedImportIds.has(row.importEntry.id) : false;
+                const importEntry = row.importEntry;
+                const isSelected = row.id === activeSampleRowId;
+                const isImportChecked = importEntry ? selectedImportIds.has(importEntry.id) : false;
 
                 return (
                   <div className="ranking-tile-shell" key={row.id}>
-                    {row.importEntry && (
+                    {importEntry && (
                       <input
                         type="checkbox"
                         checked={isImportChecked}
-                        onChange={() => toggleImportEntry(row.importEntry.id)}
+                        onChange={() => toggleImportEntry(importEntry.id)}
                         onClick={(event) => event.stopPropagation()}
                         aria-label={`选择 ${row.displayLabel}`}
                       />
                     )}
                     {image ? (
-                      <button
-                        type="button"
-                        className={`image-tile ${isSelected ? 'active' : ''}`}
-                        aria-label={row.displayLabel}
-                        onClick={() => setSelectedId(image.id)}
-                        disabled={busy}
-                      >
-                        <img src={image.image_url} alt={image.filename} />
-                        <RadarSpark image={image} />
-                        <span className="rank">#{index + 1}</span>
-                        <span className="score">{image.quality_score.toFixed(1)}</span>
-                        <strong>{row.displayLabel}</strong>
-                        <small>{formatView(image.view)} 路 {formatConfidence(image.view_confidence)}</small>
-                        <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '链路有效' : '链路无效'}</small>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="tile-delete-button"
+                          aria-label={`删除 ${image.filename}`}
+                          onClick={() => void handleDeleteImage(image)}
+                          disabled={busy}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className={`image-tile ${isSelected ? 'active' : ''}`}
+                          aria-label={row.displayLabel}
+                          onClick={() => handleSampleRowSelect(row)}
+                          disabled={busy}
+                        >
+                          <img src={image.image_url} alt={image.filename} />
+                          <RadarSpark image={image} />
+                          <span className="rank">#{index + 1}</span>
+                          <span className="score">{image.quality_score.toFixed(1)}</span>
+                          <strong>{row.displayLabel}</strong>
+                          <small>{formatView(image.view)} 路 {formatConfidence(image.view_confidence)}</small>
+                          <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '链路有效' : '链路无效'}</small>
+                        </button>
+                      </>
                     ) : (
-                      <button
-                        type="button"
-                        className={`image-tile ${isSelected ? 'active' : ''}`}
-                        aria-label={row.displayLabel}
-                        onClick={() => {
-                          setSelectedImportIndex(row.importIndex);
-                          selectCalculatedImportEntry(row.importEntry);
-                        }}
-                        disabled={busy}
-                      >
+                        <button
+                          type="button"
+                          className={`image-tile ${isSelected ? 'active' : ''}`}
+                          aria-label={row.displayLabel}
+                          onClick={() => handleSampleRowSelect(row)}
+                          disabled={busy}
+                        >
                         <span className="rank">#{index + 1}</span>
                         <strong>{row.displayLabel}</strong>
                         <small>{row.importEntry ? formatBytes(row.importEntry.size) : ''}</small>
