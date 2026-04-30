@@ -71,6 +71,39 @@ textarea {
   flex-wrap: wrap;
 }
 
+.settings-menu {
+  position: relative;
+}
+
+.settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(360px, calc(100vw - 28px));
+  max-height: min(70vh, 620px);
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8dde6;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgba(16, 24, 40, 0.18);
+}
+
+.settings-panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #172033;
+}
+
+.settings-weight-list {
+  display: grid;
+  gap: 10px;
+}
+
 .icon-button,
 .primary-button,
 .secondary-button {

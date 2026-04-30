@@ -351,8 +351,12 @@ describe('App mmWave detail panel visibility', () => {
       settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(document.getElementById('topbar-settings-panel')).toBeTruthy();
-    expect(document.body.textContent).toContain('聚焦当前样本');
+    const settingsPanel = document.getElementById('topbar-settings-panel');
+    expect(settingsPanel).toBeTruthy();
+    expect(settingsPanel?.textContent).toContain('权重控制');
+    expect(settingsPanel?.querySelectorAll('input[type="range"]')).toHaveLength(5);
+    expect(settingsPanel?.textContent).not.toContain('聚焦当前样本');
+    expect(document.querySelector('.side-panel > .weights')).toBeNull();
 
     await act(async () => {
       nameSortButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -583,7 +587,6 @@ describe('App mmWave detail panel visibility', () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    const settingsButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('设置'));
     expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(2);
 
     const secondDuplicateRow = Array.from(document.querySelectorAll('.ranking-tiles .image-tile')).find((row) =>
@@ -598,15 +601,13 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.querySelectorAll('.ranking-tiles .image-tile.active')).toHaveLength(1);
     expect(document.querySelector('.big-score')?.textContent).toBe('82.50');
 
-    await act(async () => {
-      settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
-    const focusCurrentOnlyInput = document.querySelector('#topbar-settings-panel input[type="checkbox"]') as HTMLInputElement;
-    expect(focusCurrentOnlyInput).toBeTruthy();
+    const focusCurrentOnlyButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) =>
+      button.textContent?.includes('只看当前'),
+    );
+    expect(focusCurrentOnlyButton).toBeTruthy();
 
     await act(async () => {
-      focusCurrentOnlyInput.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      focusCurrentOnlyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
     const rankedTileTitles = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));

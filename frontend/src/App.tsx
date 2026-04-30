@@ -537,14 +537,19 @@ function App() {
             </button>
             {settingsOpen && (
               <div className="settings-panel" id="topbar-settings-panel">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={focusCurrentOnly}
-                    onChange={(event) => setFocusCurrentOnly(event.target.checked)}
-                  />
-                  聚焦当前样本
-                </label>
+                <div className="settings-panel-heading">
+                  <SlidersHorizontal size={17} />
+                  <strong>权重控制</strong>
+                </div>
+                <div className="settings-weight-list">
+                  {metricKeys.map((key) => (
+                    <label className="slider-row" key={key}>
+                      <span>{metricLabels[key]}</span>
+                      <input type="range" min="0" max="1" step="0.01" value={weights[key] ?? 0} onChange={(event) => void handleWeightChange(key, Number(event.target.value))} />
+                      <b>{Math.round((weights[key] ?? 0) * 100)}%</b>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -723,19 +728,6 @@ function App() {
               })}
               {visibleRows.length === 0 && <div className="empty-state">等待计算图像</div>}
             </div>
-          </section>
-          <section className="weights">
-            <div className="panel-title">
-              <SlidersHorizontal size={18} />
-              <h2>五维权重</h2>
-            </div>
-            {metricKeys.map((key) => (
-              <label className="slider-row" key={key}>
-                <span>{metricLabels[key]}</span>
-                <input type="range" min="0" max="1" step="0.01" value={weights[key] ?? 0} onChange={(event) => void handleWeightChange(key, Number(event.target.value))} />
-                <b>{Math.round((weights[key] ?? 0) * 100)}%</b>
-              </label>
-            ))}
           </section>
         </aside>
 
