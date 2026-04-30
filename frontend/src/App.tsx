@@ -249,10 +249,14 @@ function App() {
     () => (focusCurrentOnly && selectedId ? orderedRows.filter((row) => row.image?.id === selectedId) : orderedRows),
     [focusCurrentOnly, orderedRows, selectedId],
   );
-  const rankedRows = useMemo(
-    () => visibleRows.filter((row): row is SampleRow & { image: ImageRecord } => Boolean(row.image)),
-    [visibleRows],
-  );
+  const rankedRows = useMemo(() => {
+    const seenImageIds = new Set<string>();
+    return visibleRows.filter((row): row is SampleRow & { image: ImageRecord } => {
+      if (!row.image || seenImageIds.has(row.image.id)) return false;
+      seenImageIds.add(row.image.id);
+      return true;
+    });
+  }, [visibleRows]);
   const summary = useMemo(() => {
     const count = images.length;
     const avg = count ? images.reduce((sum, image) => sum + image.quality_score, 0) / count : 0;

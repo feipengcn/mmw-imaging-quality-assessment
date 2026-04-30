@@ -272,6 +272,63 @@ describe('App mmWave detail panel visibility', () => {
     expect(summaryValues[2]?.textContent).toBe('91.20');
     expect(rankedTileTitlesAfterNameSort[0]?.textContent).toBe('a-sample.png');
   });
+
+  it('focuses the ranked list on the current sample when enabled', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [
+            createImageRecord('image-1', 'dup-sample.png', 91.2),
+            createImageRecord('image-2', 'other-sample.png', 82.5),
+          ],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('dup-sample.png', 'first-dir/dup-sample.png');
+    const secondFile = createImportFile('dup-sample.png', 'second-dir/dup-sample.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const settingsButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('设置'));
+    expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(2);
+
+    await act(async () => {
+      settingsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const focusCurrentOnlyInput = document.querySelector('#topbar-settings-panel input[type="checkbox"]') as HTMLInputElement;
+    expect(focusCurrentOnlyInput).toBeTruthy();
+
+    await act(async () => {
+      focusCurrentOnlyInput.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const rankedTileTitles = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));
+    expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(1);
+    expect(rankedTileTitles[0]?.textContent).toBe('dup-sample.png');
+  });
 });
 
 function createImageRecord(id: string, filename: string, qualityScore: number) {
