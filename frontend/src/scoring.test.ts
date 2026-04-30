@@ -8,18 +8,15 @@ describe('score weight helpers', () => {
 
   it('normalizes edited weights without losing metric keys', () => {
     const weights = normalizeWeights({
-      sharpness: 4,
-      local_contrast: 2,
-      snr: 2,
-      structure_continuity: 1,
-      artifact_strength: 1,
-      body_area_ratio: 0,
-      background_noise: 0,
-      subjective_rating: 0,
+      sharpness_score: 4,
+      significance_score: 2,
+      artifact_suppression_score: 2,
+      structure_score: 1,
+      detail_score: 1,
     });
 
     expect(weightSum(weights)).toBeCloseTo(1, 5);
-    expect(weights.sharpness).toBeCloseTo(0.4, 5);
+    expect(weights.sharpness_score).toBeCloseTo(0.4, 5);
     expect(Object.keys(weights)).toEqual(Object.keys(defaultWeights));
   });
 });

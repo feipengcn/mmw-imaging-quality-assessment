@@ -1,4 +1,4 @@
-import type { ImageResponse, SubjectiveScores, Weights } from './types';
+import type { ImageResponse, Weights } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -21,21 +21,13 @@ export async function rescoreImages(weights: Weights): Promise<ImageResponse> {
   return ensureOk(response);
 }
 
-export async function saveRating(
-  imageId: string,
-  subjectiveScores: SubjectiveScores,
-  notes: string,
-): Promise<ImageResponse> {
-  const response = await fetch(`/api/images/${imageId}/rating`, {
-    method: 'PATCH',
-    headers: jsonHeaders,
-    body: JSON.stringify({ subjective_scores: subjectiveScores, notes }),
-  });
+export async function resetImages(): Promise<ImageResponse> {
+  const response = await fetch('/api/images', { method: 'DELETE' });
   return ensureOk(response);
 }
 
-export async function resetImages(): Promise<ImageResponse> {
-  const response = await fetch('/api/images', { method: 'DELETE' });
+export async function deleteImage(imageId: string): Promise<ImageResponse> {
+  const response = await fetch(`/api/images/${imageId}`, { method: 'DELETE' });
   return ensureOk(response);
 }
 

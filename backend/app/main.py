@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .reports import records_to_dataframe, to_excel_bytes, to_html_report
 from .scoring import DEFAULT_WEIGHTS, normalize_weights, score_records
@@ -24,12 +24,6 @@ app.add_middleware(
 )
 
 repository = ImageRepository(Path(__file__).resolve().parents[2] / "data")
-
-
-class RatingUpdate(BaseModel):
-    subjective_rating: int | None = Field(default=None, ge=1, le=5)
-    subjective_scores: dict[str, int | None] | None = None
-    notes: str | None = None
 
 
 class ScoreRequest(BaseModel):
@@ -75,21 +69,6 @@ async def import_images(
     return {"imported": len(imported), "images": _with_asset_urls(records)}
 
 
-@app.patch("/api/images/{image_id}/rating")
-def update_rating(image_id: str, update: RatingUpdate) -> dict[str, Any]:
-    try:
-        repository.update_rating(
-            image_id,
-            subjective_rating=update.subjective_rating,
-            subjective_scores=update.subjective_scores,
-            notes=update.notes,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="image not found") from exc
-    records = score_records(repository.list_records(), DEFAULT_WEIGHTS)
-    return {"images": _with_asset_urls(records)}
-
-
 @app.get("/uploads/{image_id}")
 def get_image(image_id: str) -> FileResponse:
     return _file_response(repository.image_path(image_id))
@@ -98,6 +77,14 @@ def get_image(image_id: str) -> FileResponse:
 @app.get("/masks/{image_id}")
 def get_mask(image_id: str) -> FileResponse:
     return _file_response(repository.mask_path(image_id))
+
+
+@app.get("/overlays/{image_id}/{kind}")
+def get_overlay(image_id: str, kind: str) -> FileResponse:
+    try:
+        return _file_response(repository.overlay_path(image_id, kind))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="overlay not found") from exc
 
 
 @app.get("/api/export/csv")
@@ -133,12 +120,27 @@ def reset_images() -> dict[str, list[Any]]:
     return {"images": []}
 
 
+@app.delete("/api/images/{image_id}")
+def delete_image(image_id: str) -> dict[str, Any]:
+    try:
+        repository.delete_image(image_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="image not found") from exc
+    records = score_records(repository.list_records(), DEFAULT_WEIGHTS)
+    return {"images": _with_asset_urls(records), "weights": DEFAULT_WEIGHTS}
+
+
 def _with_asset_urls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     enriched = []
     for record in records:
         item = json.loads(json.dumps(record, ensure_ascii=False))
         item["image_url"] = f"/uploads/{record['id']}"
         item["mask_url"] = f"/masks/{record['id']}"
+        item["overlay_urls"] = {
+            "aoi": f"/overlays/{record['id']}/aoi",
+            "leakage": f"/overlays/{record['id']}/leakage",
+            "stripe": f"/overlays/{record['id']}/stripe",
+        }
         enriched.append(item)
     return enriched
 

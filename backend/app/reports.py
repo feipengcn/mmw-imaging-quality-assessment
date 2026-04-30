@@ -9,27 +9,32 @@ import pandas as pd
 EXPORT_COLUMNS = [
     "id",
     "filename",
+    "view",
+    "view_confidence",
     "experiment_group",
     "algorithm",
     "parameters",
     "batch",
+    "valid_sample",
     "quality_score",
-    "subjective_rating",
-    "subjective_rating_complete",
-    "contour_clarity",
-    "structure_integrity",
-    "background_cleanliness",
-    "artifact_acceptability",
-    "practical_usability",
-    "notes",
-    "sharpness",
-    "local_contrast",
-    "snr",
-    "structure_continuity",
-    "artifact_strength",
+    "sharpness_score",
+    "significance_score",
+    "artifact_suppression_score",
+    "structure_score",
+    "detail_score",
+    "tenengrad_variance",
+    "edge_rise_distance",
+    "cnr",
+    "leakage_ratio",
+    "background_bright_spot_ratio",
+    "background_local_std",
+    "component_count",
+    "solidity",
+    "saturation_ratio",
+    "roi_entropy",
+    "pai",
+    "coherent_speckle_index",
     "body_area_ratio",
-    "background_noise",
-    "edge_density",
 ]
 
 
@@ -37,24 +42,24 @@ def records_to_dataframe(records: list[dict[str, Any]]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for record in records:
         metrics = record.get("metrics") or {}
-        subjective_scores = record.get("subjective_scores") or {}
+        normalized_metrics = record.get("normalized_metrics") or {}
         rows.append(
             {
                 "id": record.get("id"),
                 "filename": record.get("filename"),
+                "view": record.get("view"),
+                "view_confidence": record.get("view_confidence"),
                 "experiment_group": record.get("experiment_group"),
                 "algorithm": record.get("algorithm"),
                 "parameters": record.get("parameters"),
                 "batch": record.get("batch"),
+                "valid_sample": record.get("valid_sample"),
                 "quality_score": record.get("quality_score"),
-                "subjective_rating": record.get("subjective_rating"),
-                "subjective_rating_complete": record.get("subjective_rating_complete"),
-                "contour_clarity": subjective_scores.get("contour_clarity"),
-                "structure_integrity": subjective_scores.get("structure_integrity"),
-                "background_cleanliness": subjective_scores.get("background_cleanliness"),
-                "artifact_acceptability": subjective_scores.get("artifact_acceptability"),
-                "practical_usability": subjective_scores.get("practical_usability"),
-                "notes": record.get("notes"),
+                "sharpness_score": normalized_metrics.get("sharpness_score"),
+                "significance_score": normalized_metrics.get("significance_score"),
+                "artifact_suppression_score": normalized_metrics.get("artifact_suppression_score"),
+                "structure_score": normalized_metrics.get("structure_score"),
+                "detail_score": normalized_metrics.get("detail_score"),
                 **{metric: metrics.get(metric) for metric in EXPORT_COLUMNS if metric in metrics},
             }
         )
@@ -91,7 +96,7 @@ def to_html_report(records: list[dict[str, Any]]) -> str:
 </head>
 <body>
   <h1>毫米波人体成像质量评价报告</h1>
-  <p class="muted">包含客观无参考指标、人工评分、加权总分和排序结果。</p>
+  <p class="muted">包含毫米波专项物理指标、五维雷达分数、惩罚标记和总分排序结果。</p>
   <div class="cards">{cards}</div>
   {table_html}
 </body>

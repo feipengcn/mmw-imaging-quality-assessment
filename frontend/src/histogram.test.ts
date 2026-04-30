@@ -12,4 +12,10 @@ describe('histogramPath', () => {
     expect(histogramPath([], 100, 40)).toBe('');
     expect(histogramPath([3, 3, 3], 90, 30)).toBe('M 0 0 L 45 0 L 90 0');
   });
+
+  it('can log-scale dominant dark bins so smaller peaks remain visible', () => {
+    const path = histogramPath([10000, 100, 0], 100, 40, 'log');
+
+    expect(path).toBe('M 0 0 L 50 19.96 L 100 40');
+  });
 });

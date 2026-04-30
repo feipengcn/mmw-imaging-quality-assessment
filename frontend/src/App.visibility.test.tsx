@@ -4,27 +4,29 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { ResizeObserver?: typeof ResizeObserver }).ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as typeof ResizeObserver;
 
-describe('App detail panel visibility', () => {
+describe('App mmWave detail panel visibility', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
 
-  it('shows the subjective rating area even before an image is calculated', async () => {
+  it('shows a radar-based quality section and no subjective rating area before an image is calculated', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
           images: [],
           weights: {
-            sharpness: 0.2,
-            local_contrast: 0.15,
-            snr: 0.15,
-            structure_continuity: 0.15,
-            artifact_strength: 0.12,
-            body_area_ratio: 0.08,
-            background_noise: 0.1,
-            subjective_rating: 0.05,
+            sharpness_score: 0.2,
+            significance_score: 0.2,
+            artifact_suppression_score: 0.15,
+            structure_score: 0.1,
+            detail_score: 0.25,
           },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -37,7 +39,12 @@ describe('App detail panel visibility', () => {
       createRoot(rootElement).render(<App />);
     });
 
-    expect(document.body.textContent).toContain('人工分项评分');
+    expect(document.body.textContent).toContain('质量雷达图');
+    expect(document.body.textContent).toContain('样本排名');
+    expect(document.body.textContent).toContain('AOI');
+    expect(document.body.textContent).toContain('伪影溢出带');
+    expect(document.body.textContent).toContain('饱和条纹区');
+    expect(document.body.textContent).not.toContain('人工打分');
   });
 
   it('removes metadata inputs from the import sidebar', async () => {
@@ -73,26 +80,7 @@ describe('App detail panel visibility', () => {
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            images: [
-              {
-                id: 'image-1',
-                filename: 'sample.png',
-                experiment_group: 'default',
-                algorithm: 'unknown',
-                parameters: '',
-                batch: '',
-                metrics: {},
-                normalized_metrics: {},
-                subjective_scores: {},
-                subjective_rating: null,
-                subjective_rating_complete: false,
-                notes: '',
-                quality_score: 82.5,
-                image_url: '/uploads/image-1',
-                mask_url: '/masks/image-1',
-                uploaded_at: '2026-04-27T00:00:00Z',
-              },
-            ],
+            images: [createImageRecord('image-1', 'sample.png', 82.5)],
             weights: {},
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -107,16 +95,14 @@ describe('App detail panel visibility', () => {
       createRoot(rootElement).render(<App />);
     });
 
-    const resetButton = Array.from(document.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('清空数据'),
-    );
+    const resetButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('清空数据'));
     expect(resetButton).toBeTruthy();
 
     await act(async () => {
       resetButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(confirmMock).toHaveBeenCalledWith('确定清空所有已导入图片、ROI mask 和评分记录吗？');
+    expect(confirmMock).toHaveBeenCalledWith('确定清空所有已导入图像、掩膜和评分记录吗？');
     expect(fetchMock).toHaveBeenCalledWith('/api/images', { method: 'DELETE' });
     expect(document.body.textContent).toContain('等待计算图像');
   });
@@ -160,9 +146,7 @@ describe('App detail panel visibility', () => {
 
     expect(document.querySelector('.visual-panel h2')?.textContent).toBe('example_pic/1000_front.png');
 
-    const secondRow = Array.from(document.querySelectorAll('.import-file-row')).find((row) =>
-      row.textContent?.includes('example_pic/1093_front.png'),
-    );
+    const secondRow = Array.from(document.querySelectorAll('.import-file-row')).find((row) => row.textContent?.includes('example_pic/1093_front.png'));
     expect(secondRow).toBeTruthy();
 
     await act(async () => {
@@ -170,6 +154,53 @@ describe('App detail panel visibility', () => {
     });
 
     expect(document.querySelector('.visual-panel h2')?.textContent).toBe('example_pic/1093_front.png');
+  });
+
+  it('deletes a ranked image on demand', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (input === '/api/images/image-2' && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              images: [createImageRecord('image-1', 'sample-a.png', 82.5)],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            images: [
+              createImageRecord('image-1', 'sample-a.png', 82.5),
+              createImageRecord('image-2', 'sample-b.png', 76.2),
+            ],
+            weights: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+    });
+    const confirmMock = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const deleteButton = document.querySelector('[aria-label="删除 sample-b.png"]');
+    expect(deleteButton).toBeTruthy();
+
+    await act(async () => {
+      deleteButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(confirmMock).toHaveBeenCalledWith('确定删除 sample-b.png 吗？');
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-2', { method: 'DELETE' });
+    expect(document.querySelector('[aria-label="删除 sample-b.png"]')).toBeNull();
+    expect(document.body.textContent).toContain('sample-a.png');
+    expect(document.body.textContent).toContain('已删除 sample-b.png。');
   });
 });
 
@@ -181,24 +212,47 @@ function createImageRecord(id: string, filename: string, qualityScore: number) {
     algorithm: 'unknown',
     parameters: '',
     batch: '',
+    view: 'unknown',
+    view_confidence: undefined,
     metrics: {
-      sharpness: 1,
-      local_contrast: 1,
-      snr: 1,
-      structure_continuity: 1,
-      artifact_strength: 1,
-      body_area_ratio: 1,
-      background_noise: 1,
+      tenengrad_variance: 1500,
+      edge_rise_distance: 2.4,
+      cnr: 6.8,
+      leakage_ratio: 0.08,
+      background_local_std: 4.0,
+      component_count: 1,
+      solidity: 0.95,
+      saturation_ratio: 0.01,
+      roi_entropy: 6.1,
+      pai: 0.03,
+      body_area_ratio: 0.18,
     },
+    metric_scores: {
+      tenengrad_variance: 80,
+      edge_rise_distance: 92,
+      cnr: 81,
+      leakage_ratio: 96,
+      background_local_std: 97,
+      component_count: 100,
+      solidity: 97,
+      saturation_ratio: 100,
+      roi_entropy: 90,
+      pai: 100,
+      body_area_ratio: 86,
+    },
+    metric_score_max: 100,
     normalized_metrics: {
-      sharpness: 0.5,
-      local_contrast: 0.5,
-      snr: 0.5,
-      structure_continuity: 0.5,
-      artifact_strength: 0.5,
-      body_area_ratio: 0.5,
-      background_noise: 0.5,
+      sharpness_score: 0.82,
+      significance_score: 0.78,
+      artifact_suppression_score: 0.87,
+      structure_score: 0.9,
+      detail_score: 0.76,
     },
+    penalty_flags: {
+      saturation: false,
+      pai: false,
+    },
+    valid_sample: true,
     features: {
       width: 8,
       height: 8,
@@ -210,13 +264,14 @@ function createImageRecord(id: string, filename: string, qualityScore: number) {
         blue: [1, 2, 3],
       },
     },
-    subjective_scores: {},
-    subjective_rating: null,
-    subjective_rating_complete: false,
-    notes: '',
     quality_score: qualityScore,
     image_url: `/uploads/${id}`,
     mask_url: `/masks/${id}`,
+    overlay_urls: {
+      aoi: `/overlays/${id}/aoi`,
+      leakage: `/overlays/${id}/leakage`,
+      stripe: `/overlays/${id}/stripe`,
+    },
     uploaded_at: '2026-04-27T00:00:00Z',
   };
 }

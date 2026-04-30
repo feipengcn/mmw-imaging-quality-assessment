@@ -1,36 +1,8 @@
-import {
-  FormEvent,
-  InputHTMLAttributes,
-  KeyboardEvent,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
-import {
-  BarChart3,
-  Download,
-  FileSpreadsheet,
-  FolderOpen,
-  ImageUp,
-  RefreshCw,
-  RotateCcw,
-  Save,
-  SlidersHorizontal,
-} from 'lucide-react';
-import {
-  fetchImages,
-  resetImages,
-  rescoreImages,
-  saveRating,
-  uploadImages,
-} from './api';
-import {
-  defaultWeights,
-  formatMetric,
-  metricKeys,
-  metricLabels,
-  normalizeWeights,
-} from './scoring';
+import { FormEvent, InputHTMLAttributes, KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RefreshCw, RotateCcw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
+import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImages } from './api';
+import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, normalizeWeights } from './scoring';
 import {
   filesToImportEntries,
   formatBytes,
@@ -40,24 +12,136 @@ import {
   type ImportEntry,
 } from './importSelection';
 import { histogramPath } from './histogram';
-import {
-  defaultSubjectiveScores,
-  getCompletedSubjectiveCount,
-  getSubjectiveAverage,
-  subjectiveScoreKeys,
-  subjectiveScoreLabels,
-} from './subjectiveRating';
-import type { ImageRecord, MetricKey, SubjectiveScoreKey, SubjectiveScores, Weights } from './types';
+import type { ImageRecord, MetricKey, Weights } from './types';
 
 type DirectoryInputProps = InputHTMLAttributes<HTMLInputElement> & {
   webkitdirectory?: string;
   directory?: string;
 };
 
+type OverlayMode = 'none' | 'aoi' | 'leakage' | 'stripe';
+
+type RawMetricRow = {
+  key: string;
+  label: string;
+  description: string;
+};
+
+type RawMetricGroup = {
+  dimension: string;
+  summary: string;
+  items: RawMetricRow[];
+};
+
 const apiExportLinks = [
   { href: '/api/export/csv', label: 'CSV', icon: FileSpreadsheet },
   { href: '/api/export/excel', label: 'Excel', icon: Download },
   { href: '/api/report/html', label: 'HTML Report', icon: BarChart3 },
+];
+
+const overlayModeLabels: Record<OverlayMode, string> = {
+  none: '原图',
+  aoi: 'AOI',
+  leakage: '伪影溢出带',
+  stripe: '饱和条纹区',
+};
+
+const rawMetricGroups: RawMetricGroup[] = [
+  {
+    dimension: '锐度',
+    summary: '描述边缘强度和边缘过渡宽度',
+    items: [
+      {
+        key: 'tenengrad_variance',
+        label: 'Tenengrad 方差',
+        description: '基于 Sobel 梯度能量的方差，反映主体轮廓和局部纹理的清晰程度。原始值越高通常越好。',
+      },
+      {
+        key: 'edge_rise_distance',
+        label: '10-90% 上升距离',
+        description: '在黄金边缘处统计灰度从 10% 上升到 90% 所跨越的距离。原始值越小越好，分数已转换为越高越好。',
+      },
+    ],
+  },
+  {
+    dimension: '显著性',
+    summary: '描述人体与背景的分离程度',
+    items: [
+      {
+        key: 'cnr',
+        label: 'CNR',
+        description: '人体区域与深层背景之间的对比噪声比。值越高，说明人体越容易从背景中分离出来。',
+      },
+    ],
+  },
+  {
+    dimension: '伪影抑制',
+    summary: '描述能量外泄、背景脏污和周期条纹',
+    items: [
+      {
+        key: 'leakage_ratio',
+        label: '泄漏比',
+        description: '人体外环带区域能量相对深层背景能量的比值，用来衡量人体边缘外的能量溢出。原始值越低越好。',
+      },
+      {
+        key: 'background_bright_spot_ratio',
+        label: '背景亮点占比',
+        description: '深层背景中异常亮点像素的比例，用来量化背景亮斑和散落高亮噪声。原始值越低越好。',
+      },
+      {
+        key: 'background_local_std',
+        label: '背景局部标准差',
+        description: '深层背景局部标准差的平均值，用来衡量背景均匀性和雾化感。原始值越低越好。',
+      },
+      {
+        key: 'coherent_speckle_index',
+        label: '相干斑指数',
+        description: '人体内部高频残差的相对强度，用来表征明暗交替的斑马纹和相干斑。原始值越低越好。',
+      },
+      {
+        key: 'pai',
+        label: 'PAI',
+        description: '频域与列投影联合得到的饱和条纹指数，用来检测接收机饱和引起的周期性条纹。原始值越低越好。',
+      },
+    ],
+  },
+  {
+    dimension: '结构完整性',
+    summary: '描述主体轮廓是否连贯紧凑',
+    items: [
+      {
+        key: 'solidity',
+        label: '紧凑度',
+        description: '人体掩膜面积与凸包面积之比，越高说明主体越完整，缺口和非物理断裂越少。',
+      },
+      {
+        key: 'component_count',
+        label: '连通域数量',
+        description: '人体掩膜内部独立连通区域的数量。一般越少越好，1 到 2 个更符合完整人体成像。',
+      },
+      {
+        key: 'body_area_ratio',
+        label: '人体面积占比',
+        description: '人体掩膜占整幅图像的面积比例。过低通常意味着分割失败或主体过弱。',
+      },
+    ],
+  },
+  {
+    dimension: '细节保真',
+    summary: '描述饱和情况与纹理信息量',
+    items: [
+      {
+        key: 'saturation_ratio',
+        label: '饱和占比',
+        description: '人体区域中接近饱和的像素占比，用来量化过曝、饱和和强亮斑溢出。原始值越低越好。',
+      },
+      {
+        key: 'roi_entropy',
+        label: '信息熵',
+        description: '人体 ROI 的灰度直方图熵，用来衡量纹理层次和细节丰富度。原始值通常越高越好。',
+      },
+    ],
+  },
 ];
 
 function normalizeDisplayPath(path: string): string {
@@ -86,16 +170,15 @@ function App() {
   const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
   const [selectedImportIndex, setSelectedImportIndex] = useState(0);
   const [selectedImportUrl, setSelectedImportUrl] = useState<string | null>(null);
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [subjectiveScoresDraft, setSubjectiveScoresDraft] = useState<SubjectiveScores>(defaultSubjectiveScores());
-  const [notesDraft, setNotesDraft] = useState('');
 
   useEffect(() => {
     fetchImages()
       .then((data) => {
         setImages(data.images);
-        if (data.weights && Object.keys(data.weights).length > 0) setWeights(data.weights);
+        setWeights(data.weights && Object.keys(data.weights).length > 0 ? normalizeWeights(data.weights) : defaultWeights);
         setSelectedId(data.images[0]?.id ?? null);
       })
       .catch((error) => setMessage(error.message));
@@ -107,30 +190,17 @@ function App() {
     }
   }, [images, selectedId]);
 
-  const selected = useMemo(
-    () => images.find((image) => image.id === selectedId) ?? images[0],
-    [images, selectedId],
-  );
-
+  const selected = useMemo(() => images.find((image) => image.id === selectedId) ?? images[0], [images, selectedId]);
   const summary = useMemo(() => {
     const count = images.length;
     const avg = count ? images.reduce((sum, image) => sum + image.quality_score, 0) / count : 0;
-    return { count, avg };
+    const best = images[0]?.quality_score ?? 0;
+    return { count, avg, best };
   }, [images]);
-
   const importSummary = useMemo(() => summarizeImportSelection(importEntries), [importEntries]);
   const selectedImportEntry = importEntries[selectedImportIndex] ?? importEntries[0];
-  const selectedImportEntries = useMemo(
-    () => getSelectedImportEntries(importEntries, selectedImportIds),
-    [importEntries, selectedImportIds],
-  );
-  const directoryInputProps: DirectoryInputProps =
-    importMode === 'folder' ? { webkitdirectory: '', directory: '' } : {};
-
-  useEffect(() => {
-    setSubjectiveScoresDraft({ ...defaultSubjectiveScores(), ...(selected?.subjective_scores ?? {}) });
-    setNotesDraft(selected?.notes ?? '');
-  }, [selected?.id, selected?.notes, selected?.subjective_scores]);
+  const selectedImportEntries = useMemo(() => getSelectedImportEntries(importEntries, selectedImportIds), [importEntries, selectedImportIds]);
+  const directoryInputProps: DirectoryInputProps = importMode === 'folder' ? { webkitdirectory: '', directory: '' } : {};
 
   useEffect(() => {
     if (!selectedImportEntry) {
@@ -149,7 +219,7 @@ function App() {
 
   async function runCalculation(entries: ImportEntry[], mode: 'selected' | 'current') {
     if (!entries.length) {
-      setMessage(mode === 'current' ? '请选择一个当前预览文件' : '请至少勾选一个图像文件');
+      setMessage(mode === 'current' ? '请先选择当前预览文件。' : '请至少勾选一个图像文件。');
       return;
     }
     const payload = new FormData();
@@ -163,9 +233,9 @@ function App() {
       const data = await uploadImages(payload);
       setImages(data.images);
       setSelectedId(data.images[0]?.id ?? null);
-      setMessage(`已计算 ${data.imported} 张图像`);
+      setMessage(`已完成 ${data.imported} 张图像的质量计算。`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '计算失败');
+      setMessage(error instanceof Error ? error.message : '计算失败。');
     } finally {
       setBusy(false);
     }
@@ -178,22 +248,8 @@ function App() {
     setImages(data.images);
   }
 
-  async function handleSaveRating() {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      const data = await saveRating(selected.id, subjectiveScoresDraft, notesDraft);
-      setImages(data.images);
-      setMessage('评分已保存');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : '保存失败');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function handleReset() {
-    const confirmed = window.confirm('确定清空所有已导入图片、ROI mask 和评分记录吗？');
+    const confirmed = window.confirm('确定清空所有已导入图像、掩膜和评分记录吗？');
     if (!confirmed) return;
 
     setBusy(true);
@@ -201,9 +257,29 @@ function App() {
       const data = await resetImages();
       setImages(data.images);
       setSelectedId(null);
-      setMessage('数据已清空');
+      setMessage('数据已清空。');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '清空失败');
+      setMessage(error instanceof Error ? error.message : '清空失败。');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteImage(image: ImageRecord) {
+    const confirmed = window.confirm(`确定删除 ${image.filename} 吗？`);
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      const data = await deleteImage(image.id);
+      setImages(data.images);
+      setSelectedId((current) => {
+        if (current && data.images.some((item) => item.id === current)) return current;
+        return data.images[0]?.id ?? null;
+      });
+      setMessage(`已删除 ${image.filename}。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '删除失败。');
     } finally {
       setBusy(false);
     }
@@ -214,7 +290,7 @@ function App() {
     setImportEntries(entries);
     setSelectedImportIndex(0);
     setSelectedImportIds(new Set(entries.map((entry) => entry.id)));
-    setMessage(entries.length ? `已选择 ${entries.length} 个图像文件` : '没有找到可导入的图像文件');
+    setMessage(entries.length ? `已选择 ${entries.length} 个图像文件。` : '没有找到可导入的图像文件。');
   }
 
   function handleImportListKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -240,16 +316,12 @@ function App() {
     });
   }
 
-  function updateSubjectiveScore(key: SubjectiveScoreKey, value: number | null) {
-    setSubjectiveScoresDraft((current) => ({ ...current, [key]: value }));
-  }
-
   return (
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <h1>毫米波人体成像质量评价</h1>
-          <p>科研评测工作台</p>
+          <h1>毫米波人体成像质量评估</h1>
+          <p>面向 mmWave 图像的物理指标评分与样本排序</p>
         </div>
         <div className="actions">
           {apiExportLinks.map(({ href, label, icon: Icon }) => (
@@ -296,7 +368,7 @@ function App() {
               <div className="import-selection-header">
                 <strong>待计算文件</strong>
                 <span>
-                  勾选 {selectedImportIds.size} / {importSummary.count}，{formatBytes(importSummary.totalBytes)}
+                  勾选 {selectedImportIds.size} / {importSummary.count}，共 {formatBytes(importSummary.totalBytes)}
                 </span>
               </div>
               {selectedImportEntry && selectedImportUrl && (
@@ -312,11 +384,7 @@ function App() {
                 <button type="button" onClick={() => setSelectedImportIds(new Set())}>
                   清空
                 </button>
-                <button
-                  type="button"
-                  onClick={() => selectedImportEntry && setSelectedImportIds(new Set([selectedImportEntry.id]))}
-                  disabled={!selectedImportEntry}
-                >
+                <button type="button" onClick={() => selectedImportEntry && setSelectedImportIds(new Set([selectedImportEntry.id]))} disabled={!selectedImportEntry}>
                   只选当前
                 </button>
               </div>
@@ -359,12 +427,7 @@ function App() {
               </div>
             </div>
             <div className="compute-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={busy || !selectedImportEntry}
-                onClick={() => selectedImportEntry && runCalculation([selectedImportEntry], 'current')}
-              >
+              <button type="button" className="secondary-button" disabled={busy || !selectedImportEntry} onClick={() => selectedImportEntry && runCalculation([selectedImportEntry], 'current')}>
                 单张计算
               </button>
               <button className="primary-button" disabled={busy || !selectedImportIds.size}>
@@ -378,20 +441,13 @@ function App() {
           <section className="weights">
             <div className="panel-title">
               <SlidersHorizontal size={18} />
-              <h2>权重</h2>
+              <h2>五维权重</h2>
             </div>
             {metricKeys.map((key) => (
               <label className="slider-row" key={key}>
                 <span>{metricLabels[key]}</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={weights[key]}
-                  onChange={(event) => void handleWeightChange(key, Number(event.target.value))}
-                />
-                <b>{Math.round(weights[key] * 100)}%</b>
+                <input type="range" min="0" max="1" step="0.01" value={weights[key] ?? 0} onChange={(event) => void handleWeightChange(key, Number(event.target.value))} />
+                <b>{Math.round((weights[key] ?? 0) * 100)}%</b>
               </label>
             ))}
           </section>
@@ -401,194 +457,136 @@ function App() {
           <div className="summary-strip">
             <MetricTile label="样本数" value={String(summary.count)} />
             <MetricTile label="平均总分" value={summary.avg.toFixed(2)} />
-            <MetricTile label="最高分" value={(images[0]?.quality_score ?? 0).toFixed(2)} />
+            <MetricTile label="最高分" value={summary.best.toFixed(2)} />
           </div>
 
           <div className="content-grid">
             <section className="visual-panel">
+              <div className="section-heading">
+                <div>
+                  <h2>{selected?.filename ?? '等待计算图像'}</h2>
+                  <span>图像质量观察区</span>
+                </div>
+                <strong className="big-score">{selected ? selected.quality_score.toFixed(2) : '--'}</strong>
+              </div>
+              {!selected && (
+                <div className="overlay-toggle-row" role="tablist" aria-label="观察图层">
+                  {(['none', 'aoi', 'leakage', 'stripe'] as OverlayMode[]).map((mode) => (
+                    <button type="button" key={mode} className={overlayMode === mode ? 'active' : ''} disabled>
+                      {overlayModeLabels[mode]}
+                    </button>
+                  ))}
+                </div>
+              )}
               {selected ? (
                 <>
-                  <div className="section-heading">
-                    <div>
-                      <h2>{selected.filename}</h2>
-                      <span>图像质量观察区</span>
+                  <FeaturePanel image={selected} />
+                  <StatusChips image={selected} />
+                  <div className="overlay-panel-shell">
+                    <div className="overlay-toggle-row" role="tablist" aria-label="观察图层">
+                      {(['none', 'aoi', 'leakage', 'stripe'] as OverlayMode[]).map((mode) => (
+                        <button
+                          type="button"
+                          key={mode}
+                          className={overlayMode === mode ? 'active' : ''}
+                          onClick={() => setOverlayMode(mode)}
+                          disabled={!selected}
+                        >
+                          {overlayModeLabels[mode]}
+                        </button>
+                      ))}
                     </div>
-                    <strong className="big-score">{selected.quality_score.toFixed(2)}</strong>
-                  </div>
-                  <div className="preview-pair large-preview">
-                    <figure>
-                      <img src={selected.image_url} alt="成像结果" />
-                      <figcaption>图像</figcaption>
-                    </figure>
-                    <figure>
-                      <img src={selected.mask_url} alt="人体区域掩膜" />
-                      <figcaption>ROI</figcaption>
-                    </figure>
+                    <div className="single-preview-shell">
+                      <div className="single-preview-stage">
+                        <img src={selected.image_url} alt="成像结果" className="single-preview-image" />
+                        {overlayMode !== 'none' && selected.overlay_urls?.[overlayMode] && (
+                          <img src={selected.overlay_urls[overlayMode]} alt={overlayModeLabels[overlayMode]} className="single-preview-overlay" />
+                        )}
+                      </div>
+                      <span className="overlay-caption">{overlayMode === 'none' ? '当前显示：原图' : `当前叠加：${overlayModeLabels[overlayMode]}`}</span>
+                    </div>
                   </div>
                 </>
               ) : (
                 <div className="empty-state visual-empty">等待计算图像</div>
               )}
-            </section>
 
-            <div className="right-stack">
-              <section className="detail-panel">
-                {selected ? (
-                  <>
-                  <div className="rating-box">
-                    <SubjectiveRatingPanel
-                      scores={subjectiveScoresDraft}
-                      notes={notesDraft}
-                      busy={busy}
-                      onScoreChange={updateSubjectiveScore}
-                      onNotesChange={setNotesDraft}
-                      onSave={handleSaveRating}
-                    />
+              <section className="embedded-ranking">
+                <div className="section-heading compact-heading">
+                  <div>
+                    <h2>样本排名</h2>
+                    <span>按综合质量分从高到低排序，面积更大的雷达图代表五维表现更均衡。</span>
                   </div>
-                  <section className="metric-score-panel">
-                    <div className="section-heading compact-heading">
-                      <h2>指标量化得分</h2>
-                      <span>原始值 / 0-100 得分 / 权重</span>
-                    </div>
-                    <div className="metric-score-grid">
-                      {metricKeys.slice(0, 7).map((key) => (
-                        <MetricScoreCard image={selected} metric={key} weight={weights[key]} key={key} />
-                      ))}
-                    </div>
-                  </section>
-                  <section className="feature-panel">
-                    <div className="section-heading compact-heading">
-                      <h2>图像特征</h2>
-                      <span>
-                        {selected.features?.width ?? '-'} x {selected.features?.height ?? '-'} / {selected.features?.mode ?? '-'}
-                      </span>
-                    </div>
-                    <div className="histogram-grid">
-                      <Histogram label="灰度" values={selected.features?.histograms.gray} className="gray" />
-                      <Histogram label="R" values={selected.features?.histograms.red} className="red" />
-                      <Histogram label="G" values={selected.features?.histograms.green} className="green" />
-                      <Histogram label="B" values={selected.features?.histograms.blue} className="blue" />
-                    </div>
-                  </section>
-                  </>
-                ) : (
-                  <EmptyDetailPanel weights={weights} />
-                )}
-              </section>
-              <section className="image-list compact-ranking">
-                <div className="section-heading">
-                  <h2>样本排名</h2>
                   <span>{images.length} 张</span>
                 </div>
-                <div className="tiles">
+                <div className="tiles ranking-tiles">
                   {images.map((image, index) => (
-                    <button
-                      className={`image-tile ${image.id === selected?.id ? 'active' : ''}`}
-                      key={image.id}
-                      onClick={() => setSelectedId(image.id)}
-                    >
-                      <img src={image.image_url} alt={image.filename} />
-                      <span className="rank">#{index + 1}</span>
-                      <span className="score">{image.quality_score.toFixed(1)}</span>
-                      <strong>{image.filename}</strong>
-                      <small>{image.algorithm}</small>
-                      <small className={image.subjective_rating_complete ? 'rating-status done' : 'rating-status'}>
-                        人工 {image.subjective_rating_complete ? image.subjective_rating?.toFixed(1) : '未完成'}
-                      </small>
-                    </button>
+                    <div className="ranking-tile-shell" key={image.id}>
+                      <button
+                        type="button"
+                        className="tile-delete-button"
+                        aria-label={`删除 ${image.filename}`}
+                        onClick={() => void handleDeleteImage(image)}
+                        disabled={busy}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <div
+                        className={`image-tile ${image.id === selected?.id ? 'active' : ''}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelectedId(image.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setSelectedId(image.id);
+                          }
+                        }}
+                      >
+                        <img src={image.image_url} alt={image.filename} />
+                        <RadarSpark image={image} />
+                        <span className="rank">#{index + 1}</span>
+                        <span className="score">{image.quality_score.toFixed(1)}</span>
+                        <strong>{image.filename}</strong>
+                        <small>{formatView(image.view)} · {formatConfidence(image.view_confidence)}</small>
+                        <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '有效样本' : '无效样本'}</small>
+                      </div>
+                    </div>
                   ))}
                   {images.length === 0 && <div className="empty-state">等待计算图像</div>}
                 </div>
               </section>
-            </div>
+            </section>
+
+            <section className="detail-panel">
+              {selected ? (
+                <>
+                  <section className="radar-panel">
+                    <div className="section-heading compact-heading">
+                      <div>
+                        <h2>质量雷达图</h2>
+                        <span>所有维度都已转换为“越高越好”。</span>
+                      </div>
+                    </div>
+                    <RadarScoreChart image={selected} />
+                  </section>
+                  <section className="metric-score-panel">
+                    <div className="section-heading compact-heading">
+                      <div>
+                        <h2>物理指标</h2>
+                        <span>左侧是原始计量值，右侧是换算后的得分 / 满分。</span>
+                      </div>
+                    </div>
+                    <RawMetricTable image={selected} />
+                  </section>
+                </>
+              ) : (
+                <EmptyDetailPanel weights={weights} />
+              )}
+            </section>
           </div>
         </section>
       </main>
-    </div>
-  );
-}
-
-function SubjectiveRatingPanel({
-  scores,
-  notes,
-  busy,
-  disabled = false,
-  onScoreChange,
-  onNotesChange,
-  onSave,
-}: {
-  scores: SubjectiveScores;
-  notes: string;
-  busy?: boolean;
-  disabled?: boolean;
-  onScoreChange?: (key: SubjectiveScoreKey, value: number | null) => void;
-  onNotesChange?: (value: string) => void;
-  onSave?: () => void;
-}) {
-  return (
-    <>
-      <div className="subjective-rating-panel">
-        <div className="section-heading compact-heading">
-          <h2>人工分项评分</h2>
-          <span>
-            {getCompletedSubjectiveCount(scores)} / 5，均分 {getSubjectiveAverage(scores)?.toFixed(2) ?? '-'}
-          </span>
-        </div>
-        <div className="subjective-score-list">
-          {subjectiveScoreKeys.map((key) => (
-            <SubjectiveScoreRow
-              key={key}
-              scoreKey={key}
-              value={scores[key]}
-              disabled={disabled}
-              onChange={onScoreChange}
-            />
-          ))}
-        </div>
-      </div>
-      <label>
-        备注
-        <textarea
-          value={notes}
-          disabled={disabled}
-          onChange={(event) => onNotesChange?.(event.target.value)}
-        />
-      </label>
-      <button className="primary-button compact" onClick={onSave} disabled={busy || disabled}>
-        <Save size={16} />
-        保存
-      </button>
-    </>
-  );
-}
-
-function SubjectiveScoreRow({
-  scoreKey,
-  value,
-  disabled,
-  onChange,
-}: {
-  scoreKey: SubjectiveScoreKey;
-  value: number | null;
-  disabled?: boolean;
-  onChange?: (key: SubjectiveScoreKey, value: number | null) => void;
-}) {
-  return (
-    <div className="subjective-score-row">
-      <span>{subjectiveScoreLabels[scoreKey]}</span>
-      <div className="score-buttons" role="radiogroup" aria-label={subjectiveScoreLabels[scoreKey]}>
-        {[1, 2, 3, 4, 5].map((score) => (
-          <button
-            type="button"
-            className={value === score ? 'active' : ''}
-            disabled={disabled}
-            key={score}
-            onClick={() => onChange?.(scoreKey, value === score ? null : score)}
-          >
-            {score}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
@@ -602,37 +600,127 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricScoreCard({ image, metric, weight }: { image: ImageRecord; metric: MetricKey; weight: number }) {
-  const normalized = (image.normalized_metrics?.[metric] ?? 0) * 100;
+function RadarScoreChart({ image }: { image: ImageRecord }) {
+  const data = metricKeys.map((key) => ({
+    metric: metricLabels[key],
+    score: Math.round((image.normalized_metrics?.[key] ?? 0) * 100),
+  }));
   return (
-    <div className="metric-score-card">
-      <div>
-        <strong>{metricLabels[metric]}</strong>
-        <span>原始值 {formatMetric(image.metrics[metric])}</span>
-      </div>
-      <b>{normalized.toFixed(1)}</b>
-      <meter min={0} max={100} value={normalized} />
-      <small>权重 {Math.round(weight * 100)}%</small>
+    <div className="radar-chart-shell">
+      <ResponsiveContainer width="100%" height={280}>
+        <RadarChart data={data} outerRadius="72%">
+          <PolarGrid stroke="#d0d5dd" />
+          <PolarAngleAxis dataKey="metric" tick={{ fill: '#475467', fontSize: 12 }} />
+          <Radar dataKey="score" stroke="#0f766e" fill="#14b8a6" fillOpacity={0.28} />
+        </RadarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
 
-function MetricPlaceholderCard({ metric, weight }: { metric: MetricKey; weight: number }) {
+function RadarSpark({ image }: { image: ImageRecord }) {
+  const values = metricKeys.map((key) => image.normalized_metrics?.[key] ?? 0);
+  const center = 24;
+  const radius = 19;
+  const points = values
+    .map((value, index) => {
+      const angle = (-Math.PI / 2) + (index / values.length) * Math.PI * 2;
+      const x = center + Math.cos(angle) * radius * value;
+      const y = center + Math.sin(angle) * radius * value;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
   return (
-    <div className="metric-score-card placeholder-card">
-      <div>
-        <strong>{metricLabels[metric]}</strong>
-        <span>原始值 -</span>
-      </div>
-      <b>-</b>
-      <meter min={0} max={100} value={0} />
-      <small>权重 {Math.round(weight * 100)}%</small>
+    <svg className="tile-radar" viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="24" cy="24" r="19" className="tile-radar-ring" />
+      <polygon points={points} className="tile-radar-fill" />
+    </svg>
+  );
+}
+
+function RawMetricTable({ image }: { image: ImageRecord }) {
+  const maxScore = image.metric_score_max ?? 100;
+  return (
+    <div className="raw-metric-table">
+      {rawMetricGroups.map((group) => (
+        <section className="raw-metric-group" key={group.dimension}>
+          <div className="raw-metric-group-header">
+            <strong>{group.dimension}</strong>
+            <span>{group.summary}</span>
+          </div>
+          <div className="raw-metric-group-body">
+            {group.items.map((row) => (
+              <div className="raw-metric-row" key={row.key}>
+                <div className="raw-metric-name">
+                  <span className="metric-tooltip">
+                    <span className="metric-tooltip-label" tabIndex={0}>
+                      {row.label}
+                    </span>
+                    <span className="metric-tooltip-bubble" role="tooltip">
+                      {row.description}
+                    </span>
+                  </span>
+                </div>
+                <div className="raw-metric-values">
+                  <strong>{formatMetric(image.metrics[row.key])}</strong>
+                  <small>
+                    {formatMetric(image.metric_scores?.[row.key])} / {maxScore}
+                  </small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
+  );
+}
+
+function StatusChips({ image }: { image: ImageRecord }) {
+  return (
+    <div className="status-chip-row">
+      <span className={`status-chip ${image.valid_sample ? 'ok' : 'warn'}`}>{image.valid_sample ? '有效样本' : '无效样本'}</span>
+      <span className="status-chip">{`视角：${formatView(image.view)}`}</span>
+      <span className="status-chip">{formatConfidence(image.view_confidence)}</span>
+      {image.penalty_flags?.saturation && <span className="status-chip danger">饱和惩罚</span>}
+      {image.penalty_flags?.pai && <span className="status-chip danger">条纹惩罚</span>}
+    </div>
+  );
+}
+
+function FeaturePanel({ image }: { image: ImageRecord }) {
+  return (
+    <section className="feature-observer-panel">
+      <div className="section-heading compact-heading">
+        <h2>图像特征</h2>
+        <span>
+          {image.features?.width ?? '-'} x {image.features?.height ?? '-'} / {image.features?.mode ?? '-'}
+        </span>
+      </div>
+      <div className="feature-summary-grid">
+        <div className="feature-stat-card">
+          <span>分辨率</span>
+          <strong>
+            {image.features?.width ?? '-'} x {image.features?.height ?? '-'}
+          </strong>
+        </div>
+        <div className="feature-stat-card">
+          <span>颜色模式</span>
+          <strong>{image.features?.mode ?? '-'}</strong>
+        </div>
+      </div>
+      <div className="feature-histogram-grid">
+        <Histogram label="灰度" values={image.features?.histograms.gray} className="gray compact" />
+        <Histogram label="R" values={image.features?.histograms.red} className="red compact" />
+        <Histogram label="G" values={image.features?.histograms.green} className="green compact" />
+        <Histogram label="B" values={image.features?.histograms.blue} className="blue compact" />
+      </div>
+    </section>
   );
 }
 
 function Histogram({ label, values, className }: { label: string; values?: number[]; className: string }) {
-  const path = histogramPath(values, 180, 72);
+  const path = histogramPath(values, 180, 72, 'log');
   return (
     <div className={`histogram-card ${className}`}>
       <span>{label}</span>
@@ -649,41 +737,59 @@ function EmptyDetailPanel({ weights }: { weights: Weights }) {
       <div className="section-heading">
         <div>
           <h2>等待计算图像</h2>
-          <span>选择文件后，可执行单张计算或计算勾选图片。</span>
+          <span>选择文件后，可以执行单张计算或计算勾选图像。</span>
         </div>
       </div>
-      <div className="rating-box">
-        <SubjectiveRatingPanel
-          scores={defaultSubjectiveScores()}
-          notes=""
-          disabled
-        />
-      </div>
-      <section className="metric-score-panel">
+      <section className="radar-panel">
         <div className="section-heading compact-heading">
-          <h2>指标量化得分</h2>
-          <span>原始值 / 0-100 得分 / 权重</span>
+          <h2>质量雷达图</h2>
+          <span>五维评分</span>
         </div>
-        <div className="metric-score-grid">
-          {metricKeys.slice(0, 7).map((key) => (
-            <MetricPlaceholderCard metric={key} weight={weights[key]} key={key} />
+        <div className="radar-chart-shell placeholder-shell">
+          {metricKeys.map((key) => (
+            <div className="placeholder-weight-row" key={key}>
+              <span>{metricLabels[key]}</span>
+              <strong>{Math.round((weights[key] ?? 0) * 100)}%</strong>
+            </div>
           ))}
         </div>
       </section>
-      <section className="feature-panel">
+      <section className="metric-score-panel">
         <div className="section-heading compact-heading">
-          <h2>图像特征</h2>
-          <span>- x - / -</span>
+          <h2>物理指标</h2>
+          <span>原始 mmWave 计量值</span>
         </div>
-        <div className="histogram-grid">
-          <Histogram label="灰度" className="gray" />
-          <Histogram label="R" className="red" />
-          <Histogram label="G" className="green" />
-          <Histogram label="B" className="blue" />
+        <div className="raw-metric-table">
+          {rawMetricGroups.map((group) => (
+            <section className="raw-metric-group" key={group.dimension}>
+              <div className="raw-metric-group-header">
+                <strong>{group.dimension}</strong>
+                <span>{group.summary}</span>
+              </div>
+              <div className="raw-metric-group-body">
+                {group.items.map((row) => (
+                  <div className="raw-metric-row" key={row.key}>
+                    <div className="raw-metric-name">
+                      <span>{row.label}</span>
+                    </div>
+                    <div className="raw-metric-values">
+                      <strong>-</strong>
+                      <small>- / 100</small>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       </section>
     </div>
   );
+}
+
+function formatConfidence(confidence: number | undefined): string {
+  if (confidence === undefined || Number.isNaN(confidence)) return '置信度 -';
+  return `置信度 ${(confidence * 100).toFixed(1)}%`;
 }
 
 export default App;

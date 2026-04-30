@@ -1,36 +1,27 @@
 import type { MetricKey, Weights } from './types';
 
 export const metricKeys: MetricKey[] = [
-  'sharpness',
-  'local_contrast',
-  'snr',
-  'structure_continuity',
-  'artifact_strength',
-  'body_area_ratio',
-  'background_noise',
-  'subjective_rating',
+  'sharpness_score',
+  'significance_score',
+  'artifact_suppression_score',
+  'structure_score',
+  'detail_score',
 ];
 
 export const metricLabels: Record<MetricKey, string> = {
-  sharpness: '清晰度',
-  local_contrast: '局部对比',
-  snr: '信噪比',
-  structure_continuity: '结构连续',
-  artifact_strength: '伪影强度',
-  body_area_ratio: '人体占比',
-  background_noise: '背景噪声',
-  subjective_rating: '人工评分',
+  sharpness_score: '锐度',
+  significance_score: '显著性',
+  artifact_suppression_score: '伪影抑制',
+  structure_score: '结构完整性',
+  detail_score: '细节保真',
 };
 
 export const defaultWeights: Weights = {
-  sharpness: 0.2,
-  local_contrast: 0.15,
-  snr: 0.15,
-  structure_continuity: 0.15,
-  artifact_strength: 0.12,
-  body_area_ratio: 0.08,
-  background_noise: 0.1,
-  subjective_rating: 0.05,
+  sharpness_score: 0.07,
+  significance_score: 0.1,
+  artifact_suppression_score: 0.45,
+  structure_score: 0.08,
+  detail_score: 0.3,
 };
 
 export function weightSum(weights: Weights): number {
@@ -57,4 +48,10 @@ export function formatMetric(value: number | undefined): string {
   if (Math.abs(value) < 1) return value.toFixed(4);
   if (Math.abs(value) < 100) return value.toFixed(2);
   return value.toFixed(1);
+}
+
+export function formatView(view: string | undefined): string {
+  if (view === 'front') return '正面';
+  if (view === 'back') return '背面';
+  return '未确定';
 }

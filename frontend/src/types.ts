@@ -1,22 +1,12 @@
 export type MetricKey =
-  | 'sharpness'
-  | 'local_contrast'
-  | 'snr'
-  | 'structure_continuity'
-  | 'artifact_strength'
-  | 'body_area_ratio'
-  | 'background_noise'
-  | 'subjective_rating';
+  | 'sharpness_score'
+  | 'significance_score'
+  | 'artifact_suppression_score'
+  | 'structure_score'
+  | 'detail_score';
 
 export type MetricMap = Record<string, number>;
 export type Weights = Record<MetricKey, number>;
-export type SubjectiveScoreKey =
-  | 'contour_clarity'
-  | 'structure_integrity'
-  | 'background_cleanliness'
-  | 'artifact_acceptability'
-  | 'practical_usability';
-export type SubjectiveScores = Record<SubjectiveScoreKey, number | null>;
 
 export interface ImageRecord {
   id: string;
@@ -25,13 +15,23 @@ export interface ImageRecord {
   algorithm: string;
   parameters: string;
   batch: string;
+  view?: 'front' | 'back' | 'unknown' | string;
+  view_confidence?: number;
   metrics: MetricMap;
+  metric_scores?: MetricMap;
+  metric_score_max?: number;
   normalized_metrics?: MetricMap;
   features?: ImageFeatures;
-  subjective_scores?: SubjectiveScores;
-  subjective_rating: number | null;
-  subjective_rating_complete?: boolean;
-  notes: string;
+  overlay_urls?: {
+    aoi: string;
+    leakage: string;
+    stripe: string;
+  };
+  penalty_flags?: {
+    saturation?: boolean;
+    pai?: boolean;
+  };
+  valid_sample?: boolean;
   quality_score: number;
   image_url: string;
   mask_url: string;
