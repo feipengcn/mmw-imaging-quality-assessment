@@ -479,43 +479,6 @@ function App() {
                   只选当前
                 </button>
               </div>
-              <div
-                className="import-file-list"
-                role="listbox"
-                tabIndex={0}
-                aria-label="待计算文件列表"
-                aria-activedescendant={selectedImportEntry ? `import-file-${selectedImportEntry.id}` : undefined}
-                onKeyDown={handleImportListKeyDown}
-              >
-                {importEntries.map((entry, index) => {
-                  const calculatedImage = findCalculatedImageForImportEntry(entry, images);
-                  const isObserved = calculatedImage?.id === selected?.id;
-                  return (
-                    <div
-                      id={`import-file-${entry.id}`}
-                      role="option"
-                      aria-selected={index === selectedImportIndex}
-                      className={`import-file-row ${index === selectedImportIndex ? 'active' : ''} ${isObserved ? 'observing' : ''}`}
-                      key={entry.id}
-                      onClick={() => {
-                        setSelectedImportIndex(index);
-                        selectCalculatedImportEntry(entry);
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedImportIds.has(entry.id)}
-                        onChange={() => toggleImportEntry(entry.id)}
-                        onClick={(event) => event.stopPropagation()}
-                        aria-label={`选择 ${entry.displayPath}`}
-                      />
-                      <span>{entry.displayPath}</span>
-                      <small>{calculatedImage ? '已计算' : formatBytes(entry.size)}</small>
-                    </div>
-                  );
-                })}
-                {importEntries.length === 0 && <div className="empty-import-list">还没有选择文件</div>}
-              </div>
             </div>
             <div className="compute-actions">
               <button type="button" className="secondary-button" disabled={busy || !selectedImportEntry} onClick={() => selectedImportEntry && runCalculation([selectedImportEntry], 'current')}>
@@ -544,44 +507,63 @@ function App() {
                     按名称
                   </button>
                 </div>
-                <span>{rankedRows.length} 张</span>
+                <span>{visibleRows.length} 张</span>
               </div>
             </div>
             <div className="tiles ranking-tiles">
-              {rankedRows.map(({ image }, index) => (
-                <div className="ranking-tile-shell" key={image.id}>
-                  <button
-                    type="button"
-                    className="tile-delete-button"
-                    aria-label={`删除 ${image.filename}`}
-                    onClick={() => void handleDeleteImage(image)}
-                    disabled={busy}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                  <div
-                    className={`image-tile ${image.id === selected?.id ? 'active' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedId(image.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setSelectedId(image.id);
-                      }
-                    }}
-                  >
-                    <img src={image.image_url} alt={image.filename} />
-                    <RadarSpark image={image} />
-                    <span className="rank">#{index + 1}</span>
-                    <span className="score">{image.quality_score.toFixed(1)}</span>
-                    <strong>{image.filename}</strong>
-                    <small>{formatView(image.view)} 路 {formatConfidence(image.view_confidence)}</small>
-                    <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '链路有效' : '链路无效'}</small>
+              {visibleRows.map((row, index) => {
+                const image = row.image;
+                const isSelected = image ? image.id === selected?.id : row.importEntry?.id === selectedImportEntry?.id;
+                const isImportChecked = row.importEntry ? selectedImportIds.has(row.importEntry.id) : false;
+
+                return (
+                  <div className="ranking-tile-shell" key={row.id}>
+                    {row.importEntry && (
+                      <input
+                        type="checkbox"
+                        checked={isImportChecked}
+                        onChange={() => toggleImportEntry(row.importEntry.id)}
+                        onClick={(event) => event.stopPropagation()}
+                        aria-label={`选择 ${row.displayLabel}`}
+                      />
+                    )}
+                    {image ? (
+                      <button
+                        type="button"
+                        className={`image-tile ${isSelected ? 'active' : ''}`}
+                        aria-label={row.displayLabel}
+                        onClick={() => setSelectedId(image.id)}
+                        disabled={busy}
+                      >
+                        <img src={image.image_url} alt={image.filename} />
+                        <RadarSpark image={image} />
+                        <span className="rank">#{index + 1}</span>
+                        <span className="score">{image.quality_score.toFixed(1)}</span>
+                        <strong>{row.displayLabel}</strong>
+                        <small>{formatView(image.view)} 路 {formatConfidence(image.view_confidence)}</small>
+                        <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '链路有效' : '链路无效'}</small>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`image-tile ${isSelected ? 'active' : ''}`}
+                        aria-label={row.displayLabel}
+                        onClick={() => {
+                          setSelectedImportIndex(row.importIndex);
+                          selectCalculatedImportEntry(row.importEntry);
+                        }}
+                        disabled={busy}
+                      >
+                        <span className="rank">#{index + 1}</span>
+                        <strong>{row.displayLabel}</strong>
+                        <small>{row.importEntry ? formatBytes(row.importEntry.size) : ''}</small>
+                        <small className="rating-status">等待计算</small>
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))}
-              {images.length === 0 && <div className="empty-state">等待计算图像</div>}
+                );
+              })}
+              {visibleRows.length === 0 && <div className="empty-state">等待计算图像</div>}
             </div>
           </section>
           <section className="weights">

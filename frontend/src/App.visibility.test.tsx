@@ -68,8 +68,20 @@ describe('App mmWave detail panel visibility', () => {
       createRoot(rootElement).render(<App />);
     });
 
-    expect(document.body.textContent).not.toContain('样本排名');
+    expect(document.querySelector('.import-file-list')).toBeNull();
     expect(document.body.textContent).toContain('样本列表');
+
+    const secondSampleRow = Array.from(document.querySelectorAll('.sample-list .image-tile')).find((row) =>
+      row.textContent?.includes('sample-a.png'),
+    );
+    expect(secondSampleRow).toBeTruthy();
+
+    await act(async () => {
+      secondSampleRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.querySelector('.visual-panel h2')?.textContent).toBe('sample-a.png');
+    expect(document.body.textContent).not.toContain('样本排名');
   });
 
   it('removes metadata inputs from the import sidebar', async () => {
