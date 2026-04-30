@@ -455,6 +455,38 @@ textarea {
   font-size: 24px;
 }
 
+.visual-heading {
+  align-items: flex-start;
+}
+
+.visual-heading-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.compact-summary {
+  grid-template-columns: repeat(3, max-content);
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+.compact-summary .metric-tile {
+  min-width: 66px;
+  padding: 6px 8px;
+}
+
+.compact-summary .metric-tile span {
+  font-size: 11px;
+}
+
+.compact-summary .metric-tile strong {
+  margin-top: 2px;
+  font-size: 14px;
+}
+
 .content-grid {
   display: grid;
   grid-template-columns: minmax(560px, 1.45fr) minmax(360px, 0.85fr);
@@ -1077,6 +1109,10 @@ figcaption {
   margin-top: 10px;
 }
 
+.detail-panel > .status-chip-row {
+  margin-top: 0;
+}
+
 .status-chip {
   min-height: 28px;
   padding: 0 10px;
@@ -1139,6 +1175,17 @@ figcaption {
 
   .summary-strip {
     grid-template-columns: 1fr;
+  }
+
+  .compact-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .visual-heading,
+  .visual-heading-meta {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .single-preview-stage {

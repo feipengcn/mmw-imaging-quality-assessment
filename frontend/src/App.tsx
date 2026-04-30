@@ -732,20 +732,21 @@ function App() {
         </aside>
 
         <section className="main-panel">
-          <div className="summary-strip">
-            <MetricTile label="样本数" value={String(summary.count)} />
-            <MetricTile label="平均总分" value={summary.avg.toFixed(2)} />
-            <MetricTile label="最高分" value={summary.best.toFixed(2)} />
-          </div>
-
           <div className="content-grid">
             <section className="visual-panel">
-              <div className="section-heading">
+              <div className="section-heading visual-heading">
                 <div>
                   <h2>{selected?.filename ?? '等待计算图像'}</h2>
                   <span>图像质量观察区</span>
                 </div>
-                <strong className="big-score">{selected ? selected.quality_score.toFixed(2) : '--'}</strong>
+                <div className="visual-heading-meta">
+                  <div className="summary-strip compact-summary">
+                    <MetricTile label="样本数" value={String(summary.count)} />
+                    <MetricTile label="平均总分" value={summary.avg.toFixed(2)} />
+                    <MetricTile label="最高分" value={summary.best.toFixed(2)} />
+                  </div>
+                  <strong className="big-score">{selected ? selected.quality_score.toFixed(2) : '--'}</strong>
+                </div>
               </div>
               {!selected && (
                 <div className="overlay-toggle-row" role="tablist" aria-label="观察图层">
@@ -758,7 +759,6 @@ function App() {
               )}
               {selected ? (
                 <>
-                  <StatusChips image={selected} />
                   <div className="viewer-layout">
                     <div className="overlay-panel-shell portrait-viewer">
                       <div className="overlay-toggle-row" role="tablist" aria-label="观察图层">
@@ -796,6 +796,7 @@ function App() {
             <section className="detail-panel">
               {selected ? (
                 <>
+                  <StatusChips image={selected} />
                   <section className="radar-panel">
                     <div className="section-heading compact-heading">
                       <div>

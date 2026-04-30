@@ -549,6 +549,34 @@ describe('App mmWave detail panel visibility', () => {
     expect(viewerLayout?.querySelectorAll('.feature-histogram-grid .histogram-card')).toHaveLength(4);
   });
 
+  it('keeps global summary compact in the viewer corner and status chips in the metric rail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [
+            createImageRecord('image-1', 'sample-a.png', 91.2),
+            createImageRecord('image-2', 'sample-b.png', 82.5),
+          ],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    expect(document.querySelector('.main-panel > .summary-strip')).toBeNull();
+    expect(document.querySelector('.visual-panel .compact-summary')).toBeTruthy();
+    expect(document.querySelectorAll('.visual-panel .compact-summary .metric-tile')).toHaveLength(3);
+    expect(document.querySelector('.visual-panel > .status-chip-row')).toBeNull();
+    expect(document.querySelector('.detail-panel .status-chip-row')).toBeTruthy();
+  });
+
   it('focuses the ranked list on the current sample when enabled', async () => {
     Object.defineProperty(globalThis.URL, 'createObjectURL', {
       value: vi.fn(() => 'blob:preview'),
