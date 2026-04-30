@@ -25,7 +25,8 @@ type SampleSortMode = 'score' | 'name';
 type SampleRow = {
   id: string;
   importIndex: number;
-  label: string;
+  displayLabel: string;
+  sortLabel: string;
   importEntry?: ImportEntry;
   image?: ImageRecord;
 };
@@ -179,7 +180,8 @@ function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): S
     return {
       id: entry.id,
       importIndex,
-      label: entry.displayPath,
+      displayLabel: entry.displayPath,
+      sortLabel: image?.filename ?? entry.displayPath,
       importEntry: entry,
       image,
     };
@@ -190,7 +192,8 @@ function buildSampleRows(importEntries: ImportEntry[], images: ImageRecord[]): S
     .map((image, imageIndex) => ({
       id: image.id,
       importIndex: importEntries.length + imageIndex,
-      label: image.filename,
+      displayLabel: image.filename,
+      sortLabel: image.filename,
       image,
     }));
 
@@ -237,7 +240,7 @@ function App() {
   const orderedRows = useMemo(() => {
     return [...sampleRows].sort((left, right) => {
       if (sampleSortMode === 'name') {
-        return left.label.localeCompare(right.label, 'zh-CN');
+        return left.sortLabel.localeCompare(right.sortLabel, 'zh-CN');
       }
       return (right.image?.quality_score ?? -1) - (left.image?.quality_score ?? -1);
     });

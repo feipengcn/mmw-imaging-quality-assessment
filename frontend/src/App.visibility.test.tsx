@@ -204,6 +204,14 @@ describe('App mmWave detail panel visibility', () => {
   });
 
   it('shows list sort controls and a settings entry in the top bar', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -222,6 +230,15 @@ describe('App mmWave detail panel visibility', () => {
 
     await act(async () => {
       createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('a-sample.png', 'z-dir/a-sample.png');
+    const secondFile = createImportFile('b-sample.png', 'a-dir/b-sample.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
     const scoreSortButton = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.includes('按得分'));
@@ -249,9 +266,11 @@ describe('App mmWave detail panel visibility', () => {
       nameSortButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
+    const rankedTileTitlesAfterNameSort = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));
     expect(nameSortButton?.className).toContain('active');
     expect(scoreSortButton?.className).not.toContain('active');
     expect(summaryValues[2]?.textContent).toBe('91.20');
+    expect(rankedTileTitlesAfterNameSort[0]?.textContent).toBe('a-sample.png');
   });
 });
 
