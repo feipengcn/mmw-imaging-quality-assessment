@@ -766,31 +766,33 @@ function App() {
               )}
               {selected ? (
                 <>
-                  <FeaturePanel image={selected} />
                   <StatusChips image={selected} />
-                  <div className="overlay-panel-shell">
-                    <div className="overlay-toggle-row" role="tablist" aria-label="观察图层">
-                      {(['none', 'aoi', 'leakage', 'stripe'] as OverlayMode[]).map((mode) => (
-                        <button
-                          type="button"
-                          key={mode}
-                          className={overlayMode === mode ? 'active' : ''}
-                          onClick={() => setOverlayMode(mode)}
-                          disabled={!selected}
-                        >
-                          {overlayModeLabels[mode]}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="single-preview-shell">
-                      <div className="single-preview-stage">
-                        <img src={selected.image_url} alt="成像结果" className="single-preview-image" />
-                        {overlayMode !== 'none' && selected.overlay_urls?.[overlayMode] && (
-                          <img src={selected.overlay_urls[overlayMode]} alt={overlayModeLabels[overlayMode]} className="single-preview-overlay" />
-                        )}
+                  <div className="viewer-layout">
+                    <div className="overlay-panel-shell portrait-viewer">
+                      <div className="overlay-toggle-row" role="tablist" aria-label="观察图层">
+                        {(['none', 'aoi', 'leakage', 'stripe'] as OverlayMode[]).map((mode) => (
+                          <button
+                            type="button"
+                            key={mode}
+                            className={overlayMode === mode ? 'active' : ''}
+                            onClick={() => setOverlayMode(mode)}
+                            disabled={!selected}
+                          >
+                            {overlayModeLabels[mode]}
+                          </button>
+                        ))}
                       </div>
-                      <span className="overlay-caption">{overlayMode === 'none' ? '当前显示：原图' : `当前叠加：${overlayModeLabels[overlayMode]}`}</span>
+                      <div className="single-preview-shell">
+                        <div className="single-preview-stage">
+                          <img src={selected.image_url} alt="成像结果" className="single-preview-image" />
+                          {overlayMode !== 'none' && selected.overlay_urls?.[overlayMode] && (
+                            <img src={selected.overlay_urls[overlayMode]} alt={overlayModeLabels[overlayMode]} className="single-preview-overlay" />
+                          )}
+                        </div>
+                        <span className="overlay-caption">{overlayMode === 'none' ? '当前显示：原图' : `当前叠加：${overlayModeLabels[overlayMode]}`}</span>
+                      </div>
                     </div>
+                    <FeaturePanel image={selected} />
                   </div>
                 </>
               ) : (

@@ -519,6 +519,32 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.body.textContent).toContain('已删除 2 个选中样本。');
   });
 
+  it('places image features in a vertical histogram rail beside the portrait viewer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [createImageRecord('image-1', 'portrait-sample.png', 91.2)],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const viewerLayout = document.querySelector('.viewer-layout');
+    expect(viewerLayout).toBeTruthy();
+    expect(viewerLayout?.querySelector(':scope > .overlay-panel-shell')).toBeTruthy();
+    expect(viewerLayout?.querySelector(':scope > .feature-observer-panel')).toBeTruthy();
+    expect(viewerLayout?.querySelector('.single-preview-stage')).toBeTruthy();
+    expect(viewerLayout?.querySelectorAll('.feature-histogram-grid .histogram-card')).toHaveLength(4);
+  });
+
   it('focuses the ranked list on the current sample when enabled', async () => {
     Object.defineProperty(globalThis.URL, 'createObjectURL', {
       value: vi.fn(() => 'blob:preview'),
