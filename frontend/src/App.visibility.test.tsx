@@ -365,6 +365,160 @@ describe('App mmWave detail panel visibility', () => {
     expect(rankedTileTitlesAfterNameSort[0]?.textContent).toBe('z-dir/a-sample.png');
   });
 
+  it('supports focusing the current sample from the left list actions', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [
+            createImageRecord('image-1', 'sample-b.png', 82.5),
+            createImageRecord('image-2', 'sample-a.png', 91.2),
+          ],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const secondRow = Array.from(document.querySelectorAll('.ranking-tiles .image-tile')).find((row) =>
+      row.textContent?.includes('sample-b.png'),
+    );
+    expect(secondRow).toBeTruthy();
+
+    await act(async () => {
+      secondRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const focusButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) =>
+      button.textContent?.includes('只看当前'),
+    );
+    expect(focusButton).toBeTruthy();
+    expect(document.body.textContent).toContain('计算选中');
+    expect(document.body.textContent).toContain('全选');
+    expect(document.body.textContent).toContain('清空');
+    expect(document.body.textContent).toContain('删除选中');
+
+    await act(async () => {
+      focusButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const focusedTitles = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));
+    expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(1);
+    expect(focusedTitles[0]?.textContent).toBe('sample-b.png');
+  });
+
+  it('runs calculate, selection, and delete actions from the unified sample list', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (input === '/api/import' && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              imported: 2,
+              images: [
+                createImageRecord('image-1', 'a-dir/a-sample.png', 91.2),
+                createImageRecord('image-2', 'b-dir/b-sample.png', 82.5),
+              ],
+              weights: {},
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (input === '/api/images/image-1' && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              images: [createImageRecord('image-2', 'b-dir/b-sample.png', 82.5)],
+              weights: {},
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (input === '/api/images/image-2' && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ images: [], weights: {} }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            images: [
+              createImageRecord('image-1', 'a-dir/a-sample.png', 91.2),
+              createImageRecord('image-2', 'b-dir/b-sample.png', 82.5),
+            ],
+            weights: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+    });
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('a-sample.png', 'a-dir/a-sample.png');
+    const secondFile = createImportFile('b-sample.png', 'b-dir/b-sample.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const selectedCheckboxes = () => Array.from(document.querySelectorAll<HTMLInputElement>('.ranking-tile-shell input[type="checkbox"]'));
+    expect(selectedCheckboxes().filter((checkbox) => checkbox.checked)).toHaveLength(2);
+
+    const clearButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) => button.textContent?.includes('清空'));
+    const selectAllButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) => button.textContent?.includes('全选'));
+    const calculateButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) => button.textContent?.includes('计算选中'));
+    const deleteButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) => button.textContent?.includes('删除选中'));
+
+    await act(async () => {
+      clearButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(selectedCheckboxes().filter((checkbox) => checkbox.checked)).toHaveLength(0);
+
+    await act(async () => {
+      selectAllButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(selectedCheckboxes().filter((checkbox) => checkbox.checked)).toHaveLength(2);
+
+    await act(async () => {
+      calculateButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/import', expect.objectContaining({ method: 'POST' }));
+
+    await act(async () => {
+      deleteButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-1', { method: 'DELETE' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-2', { method: 'DELETE' });
+    expect(document.body.textContent).toContain('已删除 2 个选中样本。');
+  });
+
   it('focuses the ranked list on the current sample when enabled', async () => {
     Object.defineProperty(globalThis.URL, 'createObjectURL', {
       value: vi.fn(() => 'blob:preview'),

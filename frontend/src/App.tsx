@@ -260,6 +260,10 @@ export function buildSampleRows(
   return { rows: [...importRows, ...imageRows], bindings: nextBindings };
 }
 
+function findCalculatedImageForImportEntry(entry: ImportEntry, rows: SampleRow[]): ImageRecord | undefined {
+  return rows.find((row) => row.importEntry?.id === entry.id)?.image;
+}
+
 function App() {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -364,7 +368,11 @@ function App() {
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await runCalculation(selectedImportEntries, 'selected');
+    await handleCalculateSelected();
+  }
+
+  async function handleCalculateSelected() {
+    await runCalculation(getSelectedImportEntries(importEntries, selectedImportIds), 'selected');
   }
 
   async function runCalculation(entries: ImportEntry[], mode: 'selected' | 'current') {
@@ -435,12 +443,49 @@ function App() {
     }
   }
 
+  async function handleDeleteSelectedImages() {
+    const ids = getSelectedImportEntries(importEntries, selectedImportIds)
+      .map((entry) => findCalculatedImageForImportEntry(entry, sampleRows)?.id)
+      .filter((id): id is string => Boolean(id));
+
+    if (!ids.length) return;
+
+    setBusy(true);
+    try {
+      for (const id of ids) {
+        await deleteImage(id);
+      }
+
+      const data = await fetchImages();
+      setImages(data.images);
+      setSelectedImportIds(new Set());
+      setSelectedId((current) => (current && data.images.some((item) => item.id === current) ? current : data.images[0]?.id ?? null));
+      setMessage(`已删除 ${ids.length} 个选中样本。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '删除失败。');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function handleImportFiles(nextFiles: FileList | null) {
     const entries = filesToImportEntries(nextFiles ?? []);
     setImportEntries(entries);
     setSelectedImportIndex(0);
     setSelectedImportIds(new Set(entries.map((entry) => entry.id)));
     setMessage(entries.length ? `已选择 ${entries.length} 个图像文件。` : '没有找到可导入的图像文件。');
+  }
+
+  function handleSelectAllImportEntries() {
+    setSelectedImportIds(new Set(importEntries.map((entry) => entry.id)));
+  }
+
+  function handleClearSelectedImportEntries() {
+    setSelectedImportIds(new Set());
+  }
+
+  function handleToggleFocusCurrentOnly() {
+    setFocusCurrentOnly((current) => !current);
   }
 
   function handleSampleRowSelect(row: SampleRow) {
@@ -591,6 +636,28 @@ function App() {
                 </div>
                 <span>{visibleRows.length} 张</span>
               </div>
+            </div>
+            <div className="sample-list-action-bar">
+              <button type="button" className="secondary-button" disabled={busy || !selectedImportEntries.length} onClick={() => void handleCalculateSelected()}>
+                计算选中
+              </button>
+              <button type="button" className={focusCurrentOnly ? 'active' : ''} aria-pressed={focusCurrentOnly} onClick={handleToggleFocusCurrentOnly}>
+                只看当前
+              </button>
+              <button type="button" onClick={handleSelectAllImportEntries} disabled={!importEntries.length}>
+                全选
+              </button>
+              <button type="button" onClick={handleClearSelectedImportEntries} disabled={!selectedImportIds.size}>
+                清空
+              </button>
+              <button
+                type="button"
+                className="danger"
+                disabled={busy || !selectedImportEntries.some((entry) => findCalculatedImageForImportEntry(entry, sampleRows))}
+                onClick={() => void handleDeleteSelectedImages()}
+              >
+                删除选中
+              </button>
             </div>
             <div className="tiles ranking-tiles">
               {visibleRows.map((row, index) => {
