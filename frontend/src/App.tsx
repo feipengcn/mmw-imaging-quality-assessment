@@ -1,5 +1,5 @@
 import { FormEvent, InputHTMLAttributes, KeyboardEvent, useEffect, useMemo, useState } from 'react';
-import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RefreshCw, RotateCcw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImages } from './api';
 import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, normalizeWeights } from './scoring';
@@ -20,6 +20,12 @@ type DirectoryInputProps = InputHTMLAttributes<HTMLInputElement> & {
 };
 
 type OverlayMode = 'none' | 'aoi' | 'leakage' | 'stripe';
+type SampleSortMode = 'score' | 'name';
+
+type SampleRow = {
+  label: string;
+  image: ImageRecord;
+};
 
 type RawMetricRow = {
   key: string;
@@ -164,6 +170,9 @@ function findCalculatedImageForImportEntry(entry: ImportEntry | undefined, image
 function App() {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sampleSortMode, setSampleSortMode] = useState<SampleSortMode>('score');
+  const [focusCurrentOnly, setFocusCurrentOnly] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [weights, setWeights] = useState<Weights>(defaultWeights);
   const [importMode, setImportMode] = useState<'files' | 'folder'>('files');
   const [importEntries, setImportEntries] = useState<ImportEntry[]>([]);
@@ -191,12 +200,28 @@ function App() {
   }, [images, selectedId]);
 
   const selected = useMemo(() => images.find((image) => image.id === selectedId) ?? images[0], [images, selectedId]);
+  const sampleRows = useMemo<SampleRow[]>(
+    () => images.map((image) => ({ label: image.filename, image })),
+    [images],
+  );
+  const orderedRows = useMemo(() => {
+    return [...sampleRows].sort((left, right) => {
+      if (sampleSortMode === 'name') {
+        return left.label.localeCompare(right.label, 'zh-CN');
+      }
+      return (right.image?.quality_score ?? -1) - (left.image?.quality_score ?? -1);
+    });
+  }, [sampleRows, sampleSortMode]);
+  const visibleRows = useMemo(
+    () => (focusCurrentOnly && selectedId ? orderedRows.filter((row) => row.image?.id === selectedId) : orderedRows),
+    [focusCurrentOnly, orderedRows, selectedId],
+  );
   const summary = useMemo(() => {
     const count = images.length;
     const avg = count ? images.reduce((sum, image) => sum + image.quality_score, 0) / count : 0;
-    const best = images[0]?.quality_score ?? 0;
+    const best = orderedRows[0]?.image?.quality_score ?? 0;
     return { count, avg, best };
-  }, [images]);
+  }, [images, orderedRows]);
   const importSummary = useMemo(() => summarizeImportSelection(importEntries), [importEntries]);
   const selectedImportEntry = importEntries[selectedImportIndex] ?? importEntries[0];
   const selectedImportEntries = useMemo(() => getSelectedImportEntries(importEntries, selectedImportIds), [importEntries, selectedImportIds]);
@@ -330,6 +355,31 @@ function App() {
               {label}
             </a>
           ))}
+          <div className="settings-menu">
+            <button
+              type="button"
+              className={`icon-button text-button ${settingsOpen ? 'active' : ''}`}
+              onClick={() => setSettingsOpen((current) => !current)}
+              aria-expanded={settingsOpen}
+              aria-controls="topbar-settings-panel"
+              title="设置"
+            >
+              <Settings2 size={17} />
+              设置
+            </button>
+            {settingsOpen && (
+              <div className="settings-panel" id="topbar-settings-panel">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={focusCurrentOnly}
+                    onChange={(event) => setFocusCurrentOnly(event.target.checked)}
+                  />
+                  聚焦当前样本
+                </label>
+              </div>
+            )}
+          </div>
           <button className="icon-button text-button danger" onClick={handleReset} disabled={busy} title="清空数据">
             <RotateCcw size={17} />
             清空数据
@@ -517,10 +567,20 @@ function App() {
                     <h2>样本排名</h2>
                     <span>按综合质量分从高到低排序，面积更大的雷达图代表五维表现更均衡。</span>
                   </div>
-                  <span>{images.length} 张</span>
+                  <div className="sample-list-toolbar">
+                    <div className="segmented-control" role="tablist" aria-label="样本排序">
+                      <button type="button" className={sampleSortMode === 'score' ? 'active' : ''} onClick={() => setSampleSortMode('score')}>
+                        按得分
+                      </button>
+                      <button type="button" className={sampleSortMode === 'name' ? 'active' : ''} onClick={() => setSampleSortMode('name')}>
+                        按名称
+                      </button>
+                    </div>
+                    <span>{visibleRows.length} 张</span>
+                  </div>
                 </div>
                 <div className="tiles ranking-tiles">
-                  {images.map((image, index) => (
+                  {visibleRows.map(({ image }, index) => (
                     <div className="ranking-tile-shell" key={image.id}>
                       <button
                         type="button"

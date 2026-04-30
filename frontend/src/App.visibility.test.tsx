@@ -202,6 +202,32 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.body.textContent).toContain('sample-a.png');
     expect(document.body.textContent).toContain('已删除 sample-b.png。');
   });
+
+  it('shows list sort controls and a settings entry in the top bar', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [
+            createImageRecord('image-1', 'b-sample.png', 82.5),
+            createImageRecord('image-2', 'a-sample.png', 91.2),
+          ],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    expect(document.body.textContent).toContain('按得分');
+    expect(document.body.textContent).toContain('按名称');
+    expect(document.body.textContent).toContain('设置');
+  });
 });
 
 function createImageRecord(id: string, filename: string, qualityScore: number) {
