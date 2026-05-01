@@ -127,7 +127,8 @@ describe('App mmWave detail panel visibility', () => {
       createRoot(rootElement).render(<App />);
     });
 
-    const firstFile = createImportFile('pending-a.png', 'batch/pending-a.png');
+    const longDisplayPath = '芯影天线/203/2018/2018_02.jpg';
+    const firstFile = createImportFile('2018_02.jpg', longDisplayPath);
     const secondFile = createImportFile('pending-b.png', 'batch/pending-b.png');
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
@@ -139,8 +140,9 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.querySelector('.import-selection')).toBeNull();
     expect(document.querySelector('.compute-actions')).toBeNull();
     expect(document.querySelector('.import-preview')).toBeNull();
-    expect(document.querySelector('.sample-list')?.textContent).toContain('batch/pending-a.png');
+    expect(document.querySelector('.sample-list')?.textContent).toContain(longDisplayPath);
     expect(document.querySelector('.sample-list')?.textContent).toContain('batch/pending-b.png');
+    expect(document.querySelector('.sample-list .sample-row-card strong')?.getAttribute('title')).toBe(longDisplayPath);
     expect(document.querySelectorAll('.sample-list .sample-row-card')).toHaveLength(2);
   });
 

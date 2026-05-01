@@ -651,7 +651,7 @@ function App() {
                           <RadarSpark image={image} />
                           <span className="rank">#{index + 1}</span>
                           <span className="score">{image.quality_score.toFixed(1)}</span>
-                          <strong>{row.displayLabel}</strong>
+                          <strong title={row.displayLabel}>{row.displayLabel}</strong>
                           <small>{formatView(image.view)} 路 {formatConfidence(image.view_confidence)}</small>
                           <small className={image.valid_sample ? 'rating-status done' : 'rating-status'}>{image.valid_sample ? '链路有效' : '链路无效'}</small>
                         </button>
@@ -665,7 +665,7 @@ function App() {
                           disabled={busy}
                         >
                         <span className="rank">#{index + 1}</span>
-                        <strong>{row.displayLabel}</strong>
+                        <strong title={row.displayLabel}>{row.displayLabel}</strong>
                         <small>{row.importEntry ? formatBytes(row.importEntry.size) : ''}</small>
                         <small className="rating-status">等待计算</small>
                       </button>

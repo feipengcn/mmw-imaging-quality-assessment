@@ -156,7 +156,7 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 380px minmax(0, 1fr);
   min-height: calc(100vh - 76px);
 }
 
@@ -784,7 +784,7 @@ textarea {
 .ranking-tiles .image-tile.sample-row-card {
   min-height: 98px;
   padding: 8px 8px 8px 38px;
-  grid-template-columns: 48px minmax(0, 1fr) 74px;
+  grid-template-columns: 44px minmax(0, 1fr) 64px;
   grid-template-rows: auto auto auto;
   grid-template-areas:
     "rank title thumb"
@@ -797,8 +797,8 @@ textarea {
 
 .ranking-tiles .image-tile.sample-row-card img {
   grid-area: thumb;
-  width: 74px;
-  height: 82px;
+  width: 64px;
+  height: 78px;
   justify-self: end;
   object-fit: contain;
 }
@@ -806,10 +806,13 @@ textarea {
 .ranking-tiles .image-tile.sample-row-card strong {
   grid-area: title;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .ranking-tiles .image-tile.sample-row-card small {
