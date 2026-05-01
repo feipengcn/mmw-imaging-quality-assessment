@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { histogramPath } from './histogram';
+import { histogramAreaPath, histogramPath } from './histogram';
 
 describe('histogramPath', () => {
   it('creates a stable svg path scaled to the requested box', () => {
@@ -17,5 +17,11 @@ describe('histogramPath', () => {
     const path = histogramPath([10000, 100, 0], 100, 40, 'log');
 
     expect(path).toBe('M 0 0 L 50 19.96 L 100 40');
+  });
+
+  it('creates a closed area path for filled histogram previews', () => {
+    const path = histogramAreaPath([0, 2, 4, 2], 100, 40);
+
+    expect(path).toBe('M 0 40 L 33.33 20 L 66.67 0 L 100 20 L 100 40 L 0 40 Z');
   });
 });

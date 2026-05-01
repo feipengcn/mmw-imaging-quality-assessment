@@ -6,7 +6,30 @@ export function histogramPath(
   height: number,
   scale: HistogramScale = 'linear',
 ): string {
-  if (!values?.length) return '';
+  return histogramPoints(values, width, height, scale)
+    .map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'} ${x} ${y}`)
+    .join(' ');
+}
+
+export function histogramAreaPath(
+  values: number[] | undefined,
+  width: number,
+  height: number,
+  scale: HistogramScale = 'linear',
+): string {
+  const points = histogramPoints(values, width, height, scale);
+  if (!points.length) return '';
+  const line = points.map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'} ${x} ${y}`).join(' ');
+  return `${line} L ${round(width)} ${round(height)} L 0 ${round(height)} Z`;
+}
+
+function histogramPoints(
+  values: number[] | undefined,
+  width: number,
+  height: number,
+  scale: HistogramScale,
+): Array<{ x: string; y: string }> {
+  if (!values?.length) return [];
   const scaledValues = values.map((value) => scaleValue(value, scale));
   const max = Math.max(...scaledValues);
   const denominator = max > 0 ? max : 1;
@@ -15,9 +38,8 @@ export function histogramPath(
     .map((value, index) => {
       const x = round(index * step);
       const y = round(height - (value / denominator) * height);
-      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
-    })
-    .join(' ');
+      return { x, y };
+    });
 }
 
 function scaleValue(value: number, scale: HistogramScale): number {

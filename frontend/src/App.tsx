@@ -9,7 +9,7 @@ import {
   getSelectedImportEntries,
   type ImportEntry,
 } from './importSelection';
-import { histogramPath } from './histogram';
+import { histogramAreaPath, histogramPath } from './histogram';
 import type { ImageRecord, MetricKey, Weights } from './types';
 
 type DirectoryInputProps = InputHTMLAttributes<HTMLInputElement> & {
@@ -903,12 +903,31 @@ function FeaturePanel({ image }: { image: ImageRecord }) {
 }
 
 function Histogram({ label, values, className }: { label: string; values?: number[]; className: string }) {
-  const path = histogramPath(values, 180, 72, 'log');
+  const width = 180;
+  const height = 72;
+  const linePath = histogramPath(values, width, height, 'log');
+  const areaPath = histogramAreaPath(values, width, height, 'log');
+  const gradientId = `histogram-fill-${className.replace(/\s+/g, '-')}`;
   return (
     <div className={`histogram-card ${className}`}>
       <span>{label}</span>
-      <svg viewBox="0 0 180 72" role="img" aria-label={`${label} 直方图`}>
-        <path d={path} />
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${label} 直方图`} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" />
+            <stop offset="100%" />
+          </linearGradient>
+        </defs>
+        <g className="histogram-gridlines" aria-hidden="true">
+          <line x1="0" x2={width} y1="18" y2="18" />
+          <line x1="0" x2={width} y1="36" y2="36" />
+          <line x1="0" x2={width} y1="54" y2="54" />
+          <line x1="45" x2="45" y1="0" y2={height} />
+          <line x1="90" x2="90" y1="0" y2={height} />
+          <line x1="135" x2="135" y1="0" y2={height} />
+        </g>
+        <path className="histogram-area" d={areaPath} fill={`url(#${gradientId})`} />
+        <path className="histogram-line" d={linePath} />
       </svg>
     </div>
   );
