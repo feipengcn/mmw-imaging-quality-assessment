@@ -105,6 +105,45 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.body.textContent).not.toContain('批次');
   });
 
+  it('uses the sample list as the only import staging and ranking table', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ images: [], weights: {} }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('pending-a.png', 'batch/pending-a.png');
+    const secondFile = createImportFile('pending-b.png', 'batch/pending-b.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(document.querySelector('.import-selection')).toBeNull();
+    expect(document.querySelector('.compute-actions')).toBeNull();
+    expect(document.querySelector('.import-preview')).toBeNull();
+    expect(document.querySelector('.sample-list')?.textContent).toContain('batch/pending-a.png');
+    expect(document.querySelector('.sample-list')?.textContent).toContain('batch/pending-b.png');
+    expect(document.querySelectorAll('.sample-list .sample-row-card')).toHaveLength(2);
+  });
+
   it('shows a discoverable reset action that clears imported images after confirmation', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (input === '/api/images' && init?.method === 'DELETE') {

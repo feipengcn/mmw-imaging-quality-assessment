@@ -213,7 +213,7 @@ textarea {
 }
 
 .file-drop {
-  min-height: 116px;
+  min-height: 76px;
   border: 1px dashed #8aa2c8;
   border-radius: 8px;
   align-items: center;
@@ -592,9 +592,19 @@ textarea {
   position: relative;
 }
 
+.ranking-tile-shell > input[type="checkbox"] {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  z-index: 4;
+  width: 18px;
+  min-height: 18px;
+  transform: translateY(-50%);
+}
+
 .tile-delete-button {
   position: absolute;
-  right: 8px;
+  right: 88px;
   bottom: 8px;
   z-index: 3;
   width: 28px;
@@ -651,6 +661,23 @@ textarea {
   right: 12px;
   color: #ffffff;
   background: #147d64;
+}
+
+.ranking-tiles .rank,
+.ranking-tiles .score {
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  justify-self: start;
+}
+
+.ranking-tiles .rank {
+  grid-area: rank;
+}
+
+.ranking-tiles .score {
+  grid-area: score;
 }
 
 .big-score {
@@ -747,28 +774,73 @@ textarea {
 }
 
 .ranking-tiles {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  max-height: 34vh;
+  grid-template-columns: 1fr;
+  max-height: calc(100vh - 330px);
   overflow: auto;
   padding-right: 4px;
+  gap: 8px;
 }
 
-.ranking-tiles .image-tile {
-  min-height: 212px;
-  grid-template-rows: 132px auto auto auto;
+.ranking-tiles .image-tile.sample-row-card {
+  min-height: 98px;
+  padding: 8px 8px 8px 38px;
+  grid-template-columns: 48px minmax(0, 1fr) 74px;
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    "rank title thumb"
+    "score meta thumb"
+    ". status thumb";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
 }
 
-.ranking-tiles .image-tile img {
-  height: 132px;
+.ranking-tiles .image-tile.sample-row-card img {
+  grid-area: thumb;
+  width: 74px;
+  height: 82px;
+  justify-self: end;
+  object-fit: contain;
+}
+
+.ranking-tiles .image-tile.sample-row-card strong {
+  grid-area: title;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.ranking-tiles .image-tile.sample-row-card small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.ranking-tiles .image-tile.sample-row-card small:first-of-type {
+  grid-area: meta;
+}
+
+.ranking-tiles .image-tile.sample-row-card .rating-status {
+  grid-area: status;
+  justify-self: start;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid #d8dde6;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.ranking-tiles .image-tile.sample-row-card .rating-status.done {
+  border-color: #b7e4cf;
+  background: #ecfdf3;
 }
 
 .tile-radar {
-  position: absolute;
-  left: 8px;
-  bottom: 56px;
-  width: 56px;
-  height: 56px;
-  filter: drop-shadow(0 3px 6px rgba(16, 24, 40, 0.28));
+  display: none;
 }
 
 .tile-radar-ring {
@@ -1206,22 +1278,22 @@ figcaption {
   }
 
   .ranking-tiles {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    grid-template-columns: 1fr;
   }
 
-  .ranking-tiles .image-tile {
-    min-height: 182px;
-    grid-template-rows: 104px auto auto auto;
+  .ranking-tiles .image-tile.sample-row-card {
+    min-height: 92px;
+    grid-template-columns: 44px minmax(0, 1fr) 66px;
+    grid-template-rows: auto auto auto;
   }
 
-  .ranking-tiles .image-tile img {
-    height: 104px;
+  .ranking-tiles .image-tile.sample-row-card img {
+    width: 66px;
+    height: 76px;
   }
 
   .tile-radar {
-    width: 48px;
-    height: 48px;
-    bottom: 52px;
+    display: none;
   }
 
   .histogram-grid {

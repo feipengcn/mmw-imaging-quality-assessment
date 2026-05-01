@@ -1,5 +1,5 @@
 import { FormEvent, InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImages } from './api';
 import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, normalizeWeights } from './scoring';
@@ -7,7 +7,6 @@ import {
   filesToImportEntries,
   formatBytes,
   getSelectedImportEntries,
-  summarizeImportSelection,
   type ImportEntry,
 } from './importSelection';
 import { histogramPath } from './histogram';
@@ -275,8 +274,6 @@ function App() {
   const [importMode, setImportMode] = useState<'files' | 'folder'>('files');
   const [importEntries, setImportEntries] = useState<ImportEntry[]>([]);
   const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
-  const [selectedImportIndex, setSelectedImportIndex] = useState(0);
-  const [selectedImportUrl, setSelectedImportUrl] = useState<string | null>(null);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -351,20 +348,8 @@ function App() {
     const best = count ? images.reduce((max, image) => Math.max(max, image.quality_score), Number.NEGATIVE_INFINITY) : 0;
     return { count, avg, best };
   }, [images]);
-  const importSummary = useMemo(() => summarizeImportSelection(importEntries), [importEntries]);
-  const selectedImportEntry = importEntries[selectedImportIndex] ?? importEntries[0];
   const selectedImportEntries = useMemo(() => getSelectedImportEntries(importEntries, selectedImportIds), [importEntries, selectedImportIds]);
   const directoryInputProps: DirectoryInputProps = importMode === 'folder' ? { webkitdirectory: '', directory: '' } : {};
-
-  useEffect(() => {
-    if (!selectedImportEntry) {
-      setSelectedImportUrl(null);
-      return;
-    }
-    const objectUrl = URL.createObjectURL(selectedImportEntry.file);
-    setSelectedImportUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [selectedImportEntry]);
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -471,7 +456,6 @@ function App() {
   function handleImportFiles(nextFiles: FileList | null) {
     const entries = filesToImportEntries(nextFiles ?? []);
     setImportEntries(entries);
-    setSelectedImportIndex(0);
     setSelectedImportIds(new Set(entries.map((entry) => entry.id)));
     setMessage(entries.length ? `已选择 ${entries.length} 个图像文件。` : '没有找到可导入的图像文件。');
   }
@@ -490,9 +474,6 @@ function App() {
 
   function handleSampleRowSelect(row: SampleRow) {
     setActiveSampleRowId(row.id);
-    if (row.importEntry) {
-      setSelectedImportIndex(row.importIndex);
-    }
     if (row.image) {
       setSelectedId(row.image.id);
       return;
@@ -587,40 +568,6 @@ function App() {
               {importMode === 'folder' ? <FolderOpen size={24} /> : <ImageUp size={24} />}
               <span>{importEntries.length ? `${importEntries.length} 个图像文件` : '选择图像'}</span>
             </label>
-            <div className="import-selection">
-              <div className="import-selection-header">
-                <strong>待计算文件</strong>
-                <span>
-                  勾选 {selectedImportIds.size} / {importSummary.count}，共 {formatBytes(importSummary.totalBytes)}
-                </span>
-              </div>
-              {selectedImportEntry && selectedImportUrl && (
-                <div className="import-preview">
-                  <img src={selectedImportUrl} alt={selectedImportEntry.displayPath} />
-                  <span>{selectedImportEntry.displayPath}</span>
-                </div>
-              )}
-              <div className="import-toolbar">
-                <button type="button" onClick={() => setSelectedImportIds(new Set(importEntries.map((entry) => entry.id)))}>
-                  全选
-                </button>
-                <button type="button" onClick={() => setSelectedImportIds(new Set())}>
-                  清空
-                </button>
-                <button type="button" onClick={() => selectedImportEntry && setSelectedImportIds(new Set([selectedImportEntry.id]))} disabled={!selectedImportEntry}>
-                  只选当前
-                </button>
-              </div>
-            </div>
-            <div className="compute-actions">
-              <button type="button" className="secondary-button" disabled={busy || !selectedImportEntry} onClick={() => selectedImportEntry && runCalculation([selectedImportEntry], 'current')}>
-                单张计算
-              </button>
-              <button className="primary-button" disabled={busy || !selectedImportIds.size}>
-                <RefreshCw size={17} className={busy ? 'spin' : ''} />
-                计算勾选
-              </button>
-            </div>
             {message && <p className="status-line">{message}</p>}
           </form>
 
@@ -695,7 +642,7 @@ function App() {
                         </button>
                         <button
                           type="button"
-                          className={`image-tile ${isSelected ? 'active' : ''}`}
+                          className={`image-tile sample-row-card ${isSelected ? 'active' : ''}`}
                           aria-label={row.displayLabel}
                           onClick={() => handleSampleRowSelect(row)}
                           disabled={busy}
@@ -712,7 +659,7 @@ function App() {
                     ) : (
                         <button
                           type="button"
-                          className={`image-tile ${isSelected ? 'active' : ''}`}
+                          className={`image-tile sample-row-card ${isSelected ? 'active' : ''}`}
                           aria-label={row.displayLabel}
                           onClick={() => handleSampleRowSelect(row)}
                           disabled={busy}
