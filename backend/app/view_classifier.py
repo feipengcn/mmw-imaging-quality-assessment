@@ -12,6 +12,7 @@ from .processing import extract_body_mask, normalize_grayscale
 
 
 REFERENCE_SIZE = (48, 96)
+REFERENCE_MAX_SIDE = 160
 MIN_CONFIDENCE = 0.55
 
 
@@ -74,7 +75,7 @@ class PrototypeViewClassifier:
             view = _view_from_name(path.name)
             if view is None:
                 continue
-            image = Image.open(path).convert("L")
+            image = _resize_reference_image(Image.open(path))
             samples.append(ReferenceSample(path.name, view, _view_embedding(image)))
         return samples
 
@@ -124,6 +125,19 @@ def _view_from_name(name: str) -> str | None:
     if stem.endswith("_back") or "back" in stem:
         return "back"
     return None
+
+
+def _resize_reference_image(image: Image.Image) -> Image.Image:
+    grayscale = image.convert("L")
+    max_side = max(grayscale.size)
+    if max_side <= REFERENCE_MAX_SIDE:
+        return grayscale
+    scale = REFERENCE_MAX_SIDE / float(max_side)
+    size = (
+        max(1, round(grayscale.width * scale)),
+        max(1, round(grayscale.height * scale)),
+    )
+    return grayscale.resize(size, Image.Resampling.BILINEAR)
 
 
 @lru_cache(maxsize=1)

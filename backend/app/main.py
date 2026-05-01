@@ -69,6 +69,47 @@ async def import_images(
     return {"imported": len(imported), "images": _with_asset_urls(records)}
 
 
+@app.post("/api/import/progress")
+async def import_images_with_progress(
+    files: Annotated[list[UploadFile], File()],
+    experiment_group: Annotated[str, Form()] = "default",
+    algorithm: Annotated[str, Form()] = "unknown",
+    parameters: Annotated[str, Form()] = "",
+    batch: Annotated[str, Form()] = "",
+) -> StreamingResponse:
+    payload: list[tuple[str, bytes]] = []
+    for upload in files:
+        payload.append((upload.filename or "image", await upload.read()))
+
+    def events():
+        imported_count = 0
+        for progress in repository.iter_import_files(payload, experiment_group, algorithm, parameters, batch):
+            imported_count += 1
+            record = progress["record"]
+            yield json.dumps(
+                {
+                    "type": "progress",
+                    "completed": progress["completed"],
+                    "total": progress["total"],
+                    "filename": record["filename"],
+                },
+                ensure_ascii=False,
+            ) + "\n"
+
+        records = score_records(repository.list_records(), DEFAULT_WEIGHTS)
+        yield json.dumps(
+            {
+                "type": "complete",
+                "imported": imported_count,
+                "images": _with_asset_urls(records),
+                "weights": DEFAULT_WEIGHTS,
+            },
+            ensure_ascii=False,
+        ) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
+
+
 @app.get("/uploads/{image_id}")
 def get_image(image_id: str) -> FileResponse:
     return _file_response(repository.image_path(image_id))

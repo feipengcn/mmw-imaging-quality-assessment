@@ -2,7 +2,7 @@ import { FormEvent, InputHTMLAttributes, useEffect, useMemo, useRef, useState } 
 import { createPortal } from 'react-dom';
 import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
-import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImages } from './api';
+import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImagesWithProgress, type ImportProgress } from './api';
 import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, normalizeWeights } from './scoring';
 import {
   filesToImportEntries,
@@ -39,6 +39,10 @@ type RawMetricGroup = {
   dimension: string;
   summary: string;
   items: RawMetricRow[];
+};
+
+type ImportProgressState = ImportProgress & {
+  active: boolean;
 };
 
 const apiExportLinks = [
@@ -270,6 +274,7 @@ function App() {
   const [importMode, setImportMode] = useState<'files' | 'folder'>('files');
   const [importEntries, setImportEntries] = useState<ImportEntry[]>([]);
   const [selectedSampleRowIds, setSelectedSampleRowIds] = useState<Set<string>>(new Set());
+  const [importProgress, setImportProgress] = useState<ImportProgressState | null>(null);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -385,12 +390,17 @@ function App() {
     payload.append('parameters', '');
     payload.append('batch', '');
     setBusy(true);
+    setImportProgress({ active: true, completed: 0, total: entries.length, filename: entries[0]?.displayPath ?? '' });
     try {
-      const data = await uploadImages(payload);
+      const data = await uploadImagesWithProgress(payload, (progress) => {
+        setImportProgress({ active: true, ...progress });
+      });
       setImages(data.images);
       setSelectedId(data.images[0]?.id ?? null);
+      setImportProgress((current) => (current ? { ...current, active: false } : null));
       setMessage(`已完成 ${data.imported} 张图像的质量计算。`);
     } catch (error) {
+      setImportProgress((current) => (current ? { ...current, active: false } : null));
       setMessage(error instanceof Error ? error.message : '计算失败。');
     } finally {
       setBusy(false);
@@ -580,6 +590,21 @@ function App() {
               <span>{importEntries.length ? `${importEntries.length} 个图像文件` : '选择图像'}</span>
             </label>
             {message && <p className="status-line">{message}</p>}
+            {importProgress && (
+              <div className={`import-progress-panel ${importProgress.active ? 'active' : ''}`}>
+                <div className="import-progress-heading">
+                  <strong>计算进度</strong>
+                  <span>{importProgress.completed} / {importProgress.total}</span>
+                </div>
+                <div className="import-progress-bar" aria-hidden="true">
+                  <span
+                    className="import-progress-fill"
+                    style={{ width: `${importProgress.total ? (importProgress.completed / importProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+                <small>{importProgress.active ? `正在处理：${importProgress.filename}` : '本轮计算已完成'}</small>
+              </div>
+            )}
           </form>
 
           <section className="sample-list">

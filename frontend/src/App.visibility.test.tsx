@@ -546,18 +546,27 @@ describe('App mmWave detail panel visibility', () => {
     });
 
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      if (input === '/api/import' && init?.method === 'POST') {
+      if (input === '/api/import/progress' && init?.method === 'POST') {
+        const encoder = new TextEncoder();
         return Promise.resolve(
           new Response(
-            JSON.stringify({
-              imported: 2,
-              images: [
-                createImageRecord('image-1', 'a-dir/a-sample.png', 91.2),
-                createImageRecord('image-2', 'b-dir/b-sample.png', 82.5),
-              ],
-              weights: {},
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(encoder.encode('{"type":"progress","completed":1,"total":2,"filename":"a-dir/a-sample.png"}\n'));
+                controller.enqueue(encoder.encode('{"type":"progress","completed":2,"total":2,"filename":"b-dir/b-sample.png"}\n'));
+                controller.enqueue(encoder.encode(JSON.stringify({
+                  type: 'complete',
+                  imported: 2,
+                  images: [
+                    createImageRecord('image-1', 'a-dir/a-sample.png', 91.2),
+                    createImageRecord('image-2', 'b-dir/b-sample.png', 82.5),
+                  ],
+                  weights: {},
+                }) + '\n'));
+                controller.close();
+              },
             }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
+            { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } },
           ),
         );
       }
@@ -631,7 +640,7 @@ describe('App mmWave detail panel visibility', () => {
     await act(async () => {
       calculateButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(fetchMock).toHaveBeenCalledWith('/api/import', expect.objectContaining({ method: 'POST' }));
+    expect(fetchMock).toHaveBeenCalledWith('/api/import/progress', expect.objectContaining({ method: 'POST' }));
 
     await act(async () => {
       deleteButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -639,6 +648,54 @@ describe('App mmWave detail panel visibility', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/images/image-1', { method: 'DELETE' });
     expect(fetchMock).toHaveBeenCalledWith('/api/images/image-2', { method: 'DELETE' });
     expect(document.body.textContent).toContain('已删除 2 个选中样本。');
+  });
+
+  it('shows batch calculation progress immediately after starting selected imports', async () => {
+    Object.defineProperty(globalThis.URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(globalThis.URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/import/progress') {
+        return new Promise(() => undefined);
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ images: [], weights: {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const firstFile = createImportFile('a-sample.png', 'a-dir/a-sample.png');
+    const secondFile = createImportFile('b-sample.png', 'b-dir/b-sample.png');
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [firstFile, secondFile], configurable: true });
+
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const calculateButton = Array.from(document.querySelectorAll('.sample-list-action-bar button')).find((button) => button.textContent?.includes('计算选中'));
+
+    await act(async () => {
+      calculateButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain('计算进度');
+    expect(document.body.textContent).toContain('0 / 2');
   });
 
   it('places image features in a vertical histogram rail beside the portrait viewer', async () => {

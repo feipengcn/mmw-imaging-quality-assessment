@@ -3,6 +3,8 @@ from io import BytesIO
 import numpy as np
 from PIL import Image
 
+import app.storage as storage
+from app.processing import QualityAnalysis
 from app.storage import ImageRepository
 
 
@@ -90,3 +92,38 @@ def test_delete_image_removes_record_and_assets(tmp_path):
     assert not (repo.masks_dir / record["mask_filename"]).exists()
     for filename in record["overlay_filenames"].values():
         assert not (repo.overlays_dir / filename).exists()
+
+
+def test_import_files_analyzes_large_images_at_bounded_size_and_saves_original_sized_overlay(tmp_path, monkeypatch):
+    arr = np.full((840, 440), 20, dtype=np.uint8)
+    arr[200:700, 140:300] = 200
+    buffer = BytesIO()
+    Image.fromarray(arr, mode="L").save(buffer, format="PNG")
+    analyzed_sizes = []
+
+    def fake_analyze_quality(image, mask=None):
+        analyzed_sizes.append(image.size)
+        analysis_mask = np.zeros((image.height, image.width), dtype=bool)
+        analysis_mask[image.height // 4 : image.height * 3 // 4, image.width // 3 : image.width * 2 // 3] = True
+        return QualityAnalysis(mask=analysis_mask, metrics={"body_area_ratio": float(analysis_mask.mean())}, overlays={
+            "aoi": analysis_mask,
+            "leakage": ~analysis_mask,
+            "stripe": np.zeros_like(analysis_mask, dtype=bool),
+        })
+
+    monkeypatch.setattr(storage, "analyze_quality", fake_analyze_quality)
+    monkeypatch.setattr(storage, "predict_view", lambda image, mask=None, source_name=None: {"view": "unknown", "confidence": 0.0})
+
+    repo = ImageRepository(tmp_path)
+    record = repo.import_files(
+        [("large.png", buffer.getvalue())],
+        experiment_group="group",
+        algorithm="algorithm-1",
+        parameters="p",
+        batch="b",
+    )[0]
+
+    assert analyzed_sizes
+    assert max(analyzed_sizes[0]) <= storage.IMPORT_ANALYSIS_MAX_SIDE
+    assert Image.open(repo.masks_dir / record["mask_filename"]).size == (440, 840)
+    assert Image.open(repo.overlays_dir / record["overlay_filenames"]["aoi"]).size == (440, 840)
