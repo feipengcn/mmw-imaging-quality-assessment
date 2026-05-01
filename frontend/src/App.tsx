@@ -7,7 +7,6 @@ import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, nor
 import {
   filesToImportEntries,
   formatBytes,
-  getSelectedImportEntries,
   type ImportEntry,
 } from './importSelection';
 import { histogramAreaPath, histogramPath } from './histogram';
@@ -260,10 +259,6 @@ export function buildSampleRows(
   return { rows: [...importRows, ...imageRows], bindings: nextBindings };
 }
 
-function findCalculatedImageForImportEntry(entry: ImportEntry, rows: SampleRow[]): ImageRecord | undefined {
-  return rows.find((row) => row.importEntry?.id === entry.id)?.image;
-}
-
 function App() {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -274,7 +269,7 @@ function App() {
   const [weights, setWeights] = useState<Weights>(defaultWeights);
   const [importMode, setImportMode] = useState<'files' | 'folder'>('files');
   const [importEntries, setImportEntries] = useState<ImportEntry[]>([]);
-  const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
+  const [selectedSampleRowIds, setSelectedSampleRowIds] = useState<Set<string>>(new Set());
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -305,6 +300,15 @@ function App() {
   useEffect(() => {
     sampleRowBindingsRef.current = sampleRowDerivation.bindings;
   }, [sampleRowDerivation]);
+
+  useEffect(() => {
+    const liveRowIds = new Set(sampleRows.map((row) => row.id));
+    setSelectedSampleRowIds((current) => {
+      const next = new Set([...current].filter((id) => liveRowIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [sampleRows]);
+
   useEffect(() => {
     if (sampleRows.length === 0) {
       setActiveSampleRowId(null);
@@ -349,7 +353,15 @@ function App() {
     const best = count ? images.reduce((max, image) => Math.max(max, image.quality_score), Number.NEGATIVE_INFINITY) : 0;
     return { count, avg, best };
   }, [images]);
-  const selectedImportEntries = useMemo(() => getSelectedImportEntries(importEntries, selectedImportIds), [importEntries, selectedImportIds]);
+  const selectedRows = useMemo(() => sampleRows.filter((row) => selectedSampleRowIds.has(row.id)), [sampleRows, selectedSampleRowIds]);
+  const selectedImportEntries = useMemo(
+    () => selectedRows.map((row) => row.importEntry).filter((entry): entry is ImportEntry => Boolean(entry)),
+    [selectedRows],
+  );
+  const selectedImageIds = useMemo(
+    () => [...new Set(selectedRows.map((row) => row.image?.id).filter((id): id is string => Boolean(id)))],
+    [selectedRows],
+  );
   const directoryInputProps: DirectoryInputProps = importMode === 'folder' ? { webkitdirectory: '', directory: '' } : {};
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
@@ -358,7 +370,7 @@ function App() {
   }
 
   async function handleCalculateSelected() {
-    await runCalculation(getSelectedImportEntries(importEntries, selectedImportIds), 'selected');
+    await runCalculation(selectedImportEntries, 'selected');
   }
 
   async function runCalculation(entries: ImportEntry[], mode: 'selected' | 'current') {
@@ -430,9 +442,7 @@ function App() {
   }
 
   async function handleDeleteSelectedImages() {
-    const ids = getSelectedImportEntries(importEntries, selectedImportIds)
-      .map((entry) => findCalculatedImageForImportEntry(entry, sampleRows)?.id)
-      .filter((id): id is string => Boolean(id));
+    const ids = selectedImageIds;
 
     if (!ids.length) return;
 
@@ -444,7 +454,7 @@ function App() {
 
       const data = await fetchImages();
       setImages(data.images);
-      setSelectedImportIds(new Set());
+      setSelectedSampleRowIds(new Set());
       setSelectedId((current) => (current && data.images.some((item) => item.id === current) ? current : data.images[0]?.id ?? null));
       setMessage(`已删除 ${ids.length} 个选中样本。`);
     } catch (error) {
@@ -457,16 +467,16 @@ function App() {
   function handleImportFiles(nextFiles: FileList | null) {
     const entries = filesToImportEntries(nextFiles ?? []);
     setImportEntries(entries);
-    setSelectedImportIds(new Set(entries.map((entry) => entry.id)));
+    setSelectedSampleRowIds(new Set(entries.map((entry) => entry.id)));
     setMessage(entries.length ? `已选择 ${entries.length} 个图像文件。` : '没有找到可导入的图像文件。');
   }
 
-  function handleSelectAllImportEntries() {
-    setSelectedImportIds(new Set(importEntries.map((entry) => entry.id)));
+  function handleSelectAllSampleRows() {
+    setSelectedSampleRowIds(new Set(visibleRows.map((row) => row.id)));
   }
 
-  function handleClearSelectedImportEntries() {
-    setSelectedImportIds(new Set());
+  function handleClearSelectedSampleRows() {
+    setSelectedSampleRowIds(new Set());
   }
 
   function handleToggleFocusCurrentOnly() {
@@ -482,8 +492,8 @@ function App() {
     setSelectedId(null);
   }
 
-  function toggleImportEntry(id: string) {
-    setSelectedImportIds((current) => {
+  function toggleSampleRow(id: string) {
+    setSelectedSampleRowIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -576,7 +586,6 @@ function App() {
             <div className="section-heading compact-heading">
               <div>
                 <h2>样本列表</h2>
-                <span>按综合质量分从高到低排序，直接在左侧浏览和切换当前样本。</span>
               </div>
               <div className="sample-list-toolbar">
                 <div className="segmented-control" role="tablist" aria-label="样本列表">
@@ -597,16 +606,16 @@ function App() {
               <button type="button" className={focusCurrentOnly ? 'active' : ''} aria-pressed={focusCurrentOnly} onClick={handleToggleFocusCurrentOnly}>
                 只看当前
               </button>
-              <button type="button" onClick={handleSelectAllImportEntries} disabled={!importEntries.length}>
+              <button type="button" onClick={handleSelectAllSampleRows} disabled={!visibleRows.length}>
                 全选
               </button>
-              <button type="button" onClick={handleClearSelectedImportEntries} disabled={!selectedImportIds.size}>
+              <button type="button" onClick={handleClearSelectedSampleRows} disabled={!selectedSampleRowIds.size}>
                 清空
               </button>
               <button
                 type="button"
                 className="danger"
-                disabled={busy || !selectedImportEntries.some((entry) => findCalculatedImageForImportEntry(entry, sampleRows))}
+                disabled={busy || !selectedImageIds.length}
                 onClick={() => void handleDeleteSelectedImages()}
               >
                 删除选中
@@ -617,19 +626,17 @@ function App() {
                 const image = row.image;
                 const importEntry = row.importEntry;
                 const isSelected = row.id === activeSampleRowId;
-                const isImportChecked = importEntry ? selectedImportIds.has(importEntry.id) : false;
+                const isRowChecked = selectedSampleRowIds.has(row.id);
 
                 return (
                   <div className="ranking-tile-shell" key={row.id}>
-                    {importEntry && (
-                      <input
-                        type="checkbox"
-                        checked={isImportChecked}
-                        onChange={() => toggleImportEntry(importEntry.id)}
-                        onClick={(event) => event.stopPropagation()}
-                        aria-label={`选择 ${row.displayLabel}`}
-                      />
-                    )}
+                    <input
+                      type="checkbox"
+                      checked={isRowChecked}
+                      onChange={() => toggleSampleRow(row.id)}
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label={`选择 ${row.displayLabel}`}
+                    />
                     {image ? (
                       <>
                         <button

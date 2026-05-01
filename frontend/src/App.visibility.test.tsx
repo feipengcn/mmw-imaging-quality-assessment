@@ -71,6 +71,7 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.querySelector('.embedded-ranking')).toBeNull();
     expect(document.querySelector('.import-file-list')).toBeNull();
     expect(document.body.textContent).toContain('样本列表');
+    expect(document.body.textContent).not.toContain('按综合质量分从高到低排序，直接在左侧浏览和切换当前样本。');
 
     const secondSampleRow = Array.from(document.querySelectorAll('.sample-list .image-tile')).find((row) =>
       row.textContent?.includes('sample-a.png'),
@@ -456,6 +457,82 @@ describe('App mmWave detail panel visibility', () => {
     const focusedTitles = Array.from(document.querySelectorAll('.ranking-tiles .image-tile strong'));
     expect(document.querySelectorAll('.ranking-tiles .image-tile')).toHaveLength(1);
     expect(focusedTitles[0]?.textContent).toBe('sample-b.png');
+  });
+
+  it('selects and deletes calculated-only rows from the unified sample list', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (input === '/api/images/image-1' && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              images: [createImageRecord('image-2', 'b-dir/b-sample.png', 82.5)],
+              weights: {},
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (input === '/api/images/image-2' && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ images: [], weights: {} }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            images: [
+              createImageRecord('image-1', 'a-dir/a-sample.png', 91.2),
+              createImageRecord('image-2', 'b-dir/b-sample.png', 82.5),
+            ],
+            weights: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+    });
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const selectedCheckboxes = () => Array.from(document.querySelectorAll<HTMLInputElement>('.ranking-tile-shell input[type="checkbox"]'));
+    const clearButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.sample-list-action-bar button')).find((button) => button.textContent?.includes('清空'));
+    const selectAllButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.sample-list-action-bar button')).find((button) => button.textContent?.includes('全选'));
+    const calculateButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.sample-list-action-bar button')).find((button) =>
+      button.textContent?.includes('计算选中'),
+    );
+    const deleteButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.sample-list-action-bar button')).find((button) =>
+      button.textContent?.includes('删除选中'),
+    );
+
+    expect(selectedCheckboxes()).toHaveLength(2);
+    expect(selectAllButton?.disabled).toBe(false);
+    expect(clearButton?.disabled).toBe(true);
+    expect(calculateButton?.disabled).toBe(true);
+    expect(deleteButton?.disabled).toBe(true);
+
+    await act(async () => {
+      selectAllButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(selectedCheckboxes().filter((checkbox) => checkbox.checked)).toHaveLength(2);
+    expect(clearButton?.disabled).toBe(false);
+    expect(deleteButton?.disabled).toBe(false);
+    expect(calculateButton?.disabled).toBe(true);
+
+    await act(async () => {
+      deleteButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-1', { method: 'DELETE' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-2', { method: 'DELETE' });
+    expect(document.body.textContent).toContain('已删除 2 个选中样本。');
   });
 
   it('runs calculate, selection, and delete actions from the unified sample list', async () => {

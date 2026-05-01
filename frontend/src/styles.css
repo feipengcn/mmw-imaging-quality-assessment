@@ -178,6 +178,14 @@ textarea {
   gap: 14px;
 }
 
+.sample-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .panel-title {
   gap: 8px;
 }
@@ -413,6 +421,19 @@ textarea {
   width: auto;
 }
 
+.sample-list-toolbar {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(172px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+}
+
+.sample-list-toolbar .segmented-control {
+  min-width: 172px;
+}
+
 .slider-row {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr) 42px;
@@ -594,7 +615,7 @@ textarea {
 
 .ranking-tile-shell > input[type="checkbox"] {
   position: absolute;
-  left: 10px;
+  left: 6px;
   top: 50%;
   z-index: 4;
   width: 18px;
@@ -783,8 +804,8 @@ textarea {
 
 .ranking-tiles .image-tile.sample-row-card {
   min-height: 98px;
-  padding: 8px 8px 8px 38px;
-  grid-template-columns: 44px minmax(0, 1fr) 64px;
+  padding: 8px 8px 8px 30px;
+  grid-template-columns: 38px minmax(0, 1fr) 64px;
   grid-template-rows: auto auto auto;
   grid-template-areas:
     "rank title thumb"
