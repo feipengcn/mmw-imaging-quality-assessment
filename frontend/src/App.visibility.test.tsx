@@ -618,6 +618,36 @@ describe('App mmWave detail panel visibility', () => {
     expect(document.querySelector('.detail-panel .status-chip-row')).toBeTruthy();
   });
 
+  it('renders metric explanations as viewport-level popovers that are not clipped by metric cards', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          images: [createImageRecord('image-1', 'sample-a.png', 91.2)],
+          weights: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const rootElement = document.createElement('div');
+    document.body.appendChild(rootElement);
+
+    await act(async () => {
+      createRoot(rootElement).render(<App />);
+    });
+
+    const metricTooltip = document.querySelector('.metric-tooltip');
+    const tooltipLabel = metricTooltip?.querySelector('.metric-tooltip-label');
+    await act(async () => {
+      tooltipLabel?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    });
+    const tooltipBubble = document.body.querySelector('.metric-tooltip-bubble');
+    expect(metricTooltip).toBeTruthy();
+    expect(tooltipBubble).toBeTruthy();
+    expect(tooltipBubble?.parentElement).toBe(document.body);
+    expect(tooltipBubble?.className).toContain('viewport-popover');
+  });
+
   it('focuses the ranked list on the current sample when enabled', async () => {
     Object.defineProperty(globalThis.URL, 'createObjectURL', {
       value: vi.fn(() => 'blob:preview'),

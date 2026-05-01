@@ -1,4 +1,5 @@
 import { FormEvent, InputHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImages } from './api';
@@ -835,14 +836,7 @@ function RawMetricTable({ image }: { image: ImageRecord }) {
             {group.items.map((row) => (
               <div className="raw-metric-row" key={row.key}>
                 <div className="raw-metric-name">
-                  <span className="metric-tooltip">
-                    <span className="metric-tooltip-label" tabIndex={0}>
-                      {row.label}
-                    </span>
-                    <span className="metric-tooltip-bubble" role="tooltip">
-                      {row.description}
-                    </span>
-                  </span>
+                  <MetricTooltip label={row.label} description={row.description} />
                 </div>
                 <div className="raw-metric-values">
                   <strong>{formatMetric(image.metrics[row.key])}</strong>
@@ -930,6 +924,52 @@ function Histogram({ label, values, className }: { label: string; values?: numbe
         <path className="histogram-line" d={linePath} />
       </svg>
     </div>
+  );
+}
+
+function MetricTooltip({ label, description }: { label: string; description: string }) {
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+
+  function updatePosition() {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = 320;
+    const left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - width - 12));
+    const preferredTop = rect.bottom + 10;
+    const fallbackTop = rect.top - 132;
+    const top = preferredTop + 132 > window.innerHeight ? Math.max(12, fallbackTop) : preferredTop;
+    setPosition({ left, top });
+  }
+
+  function openTooltip() {
+    updatePosition();
+    setIsOpen(true);
+  }
+
+  return (
+    <span className="metric-tooltip">
+      <span
+        className="metric-tooltip-label"
+        ref={triggerRef}
+        tabIndex={0}
+        onMouseEnter={openTooltip}
+        onMouseLeave={() => setIsOpen(false)}
+        onFocus={openTooltip}
+        onBlur={() => setIsOpen(false)}
+      >
+        {label}
+      </span>
+      {isOpen &&
+        createPortal(
+          <span className="metric-tooltip-bubble viewport-popover" role="tooltip" style={{ left: position.left, top: position.top }}>
+            {description}
+          </span>,
+          document.body,
+        )}
+    </span>
   );
 }
 
