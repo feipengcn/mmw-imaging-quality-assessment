@@ -1,8 +1,15 @@
+import sqlite3
+
+import pytest
+
 from app.manual_rating_repository import ManualRatingRepository
 
 
 def test_repository_initializes_schema_and_upserts_ratings(tmp_path):
     repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    with repo._connect() as connection:
+        assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
+
     admin = repo.create_user(
         username="admin",
         display_name="Admin",
@@ -31,7 +38,7 @@ def test_repository_initializes_schema_and_upserts_ratings(tmp_path):
         created_by=admin["id"],
     )
 
-    repo.upsert_rating(
+    created = repo.upsert_rating(
         task_id=task["id"],
         image_id="img-1",
         reviewer_id=reviewer["id"],
@@ -57,8 +64,29 @@ def test_repository_initializes_schema_and_upserts_ratings(tmp_path):
         },
         comment="second",
     )
+    with repo._connect() as connection:
+        row_count = connection.execute(
+            """
+            select count(*)
+            from manual_ratings
+            where task_id = ? and image_id = ? and reviewer_id = ?
+            """,
+            (task["id"], "img-1", reviewer["id"]),
+        ).fetchone()[0]
 
     assert repo.find_user_by_username("admin")["role"] == "admin"
     assert repo.get_rating(task["id"], "img-1", reviewer["id"])["comment"] == "second"
+    assert updated["id"] == created["id"]
+    assert updated["created_at"] == created["created_at"]
+    assert updated["updated_at"] != created["updated_at"]
     assert updated["sharpness_score"] == 8.0
+    assert row_count == 1
     assert repo.image_is_referenced("img-1") is True
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.create_task(
+            dataset_id="missing-dataset",
+            name="Broken Task",
+            description="",
+            reviewer_ids=[reviewer["id"]],
+            created_by=admin["id"],
+        )

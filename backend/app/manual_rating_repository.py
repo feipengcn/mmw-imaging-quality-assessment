@@ -16,6 +16,7 @@ class ManualRatingRepository:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
+        connection.execute("pragma foreign_keys = on")
         return connection
 
     def _initialize_schema(self) -> None:
@@ -38,13 +39,15 @@ class ManualRatingRepository:
                     experiment_group text not null,
                     batch text not null,
                     created_by text not null,
-                    created_at text not null
+                    created_at text not null,
+                    foreign key (created_by) references users(id)
                 );
                 create table if not exists dataset_images (
                     dataset_id text not null,
                     image_id text not null,
                     sort_order integer not null,
-                    unique(dataset_id, image_id)
+                    unique(dataset_id, image_id),
+                    foreign key (dataset_id) references datasets(id)
                 );
                 create table if not exists rating_tasks (
                     id text primary key,
@@ -53,13 +56,17 @@ class ManualRatingRepository:
                     description text not null,
                     status text not null,
                     created_by text not null,
-                    created_at text not null
+                    created_at text not null,
+                    foreign key (dataset_id) references datasets(id),
+                    foreign key (created_by) references users(id)
                 );
                 create table if not exists task_reviewers (
                     task_id text not null,
                     reviewer_id text not null,
                     weight real not null default 1.0,
-                    unique(task_id, reviewer_id)
+                    unique(task_id, reviewer_id),
+                    foreign key (task_id) references rating_tasks(id),
+                    foreign key (reviewer_id) references users(id)
                 );
                 create table if not exists manual_ratings (
                     id text primary key,
@@ -74,8 +81,12 @@ class ManualRatingRepository:
                     comment text not null default '',
                     created_at text not null,
                     updated_at text not null,
-                    unique(task_id, image_id, reviewer_id)
+                    unique(task_id, image_id, reviewer_id),
+                    foreign key (task_id) references rating_tasks(id),
+                    foreign key (reviewer_id) references users(id)
                 );
+                create index if not exists idx_dataset_images_image_id on dataset_images(image_id);
+                create index if not exists idx_manual_ratings_image_id on manual_ratings(image_id);
                 """
             )
 
