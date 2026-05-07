@@ -375,6 +375,130 @@ class ManualRatingRepository:
             tasks.append(task)
         return tasks
 
+    def next_image_for_reviewer(self, task_id: str, reviewer_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select dataset_images.image_id
+                from rating_tasks
+                join dataset_images on dataset_images.dataset_id = rating_tasks.dataset_id
+                left join manual_ratings
+                    on manual_ratings.task_id = rating_tasks.id
+                   and manual_ratings.image_id = dataset_images.image_id
+                   and manual_ratings.reviewer_id = ?
+                where rating_tasks.id = ? and manual_ratings.id is null
+                order by dataset_images.sort_order asc
+                limit 1
+                """,
+                (reviewer_id, task_id),
+            ).fetchone()
+        return None if row is None else row["image_id"]
+
+    def get_task_detail(self, task_id: str, viewer_id: str, viewer_role: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            task_row = connection.execute(
+                """
+                select rating_tasks.id, rating_tasks.dataset_id, rating_tasks.name, rating_tasks.description,
+                       rating_tasks.status, rating_tasks.created_by, rating_tasks.created_at,
+                       datasets.name as dataset_name
+                from rating_tasks
+                join datasets on datasets.id = rating_tasks.dataset_id
+                where rating_tasks.id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            if task_row is None:
+                raise KeyError(task_id)
+
+            reviewer_row = connection.execute(
+                """
+                select 1
+                from task_reviewers
+                where task_id = ? and reviewer_id = ?
+                """,
+                (task_id, viewer_id),
+            ).fetchone()
+            if viewer_role != "admin" and reviewer_row is None:
+                raise PermissionError(task_id)
+
+            total_images = connection.execute(
+                """
+                select count(*)
+                from dataset_images
+                where dataset_id = ?
+                """,
+                (task_row["dataset_id"],),
+            ).fetchone()[0]
+            completed_images = connection.execute(
+                """
+                select count(distinct image_id)
+                from manual_ratings
+                where task_id = ? and reviewer_id = ?
+                """,
+                (task_id, viewer_id),
+            ).fetchone()[0]
+
+        detail = dict(task_row)
+        detail["progress"] = {
+            "completed": int(completed_images),
+            "total": int(total_images),
+        }
+        return detail
+
+    def task_summary(self, task_id: str) -> dict[str, Any]:
+        detail = self.get_task_detail(task_id, "", "admin")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select count(*) as rating_count,
+                       count(distinct reviewer_id) as reviewer_count,
+                       count(distinct image_id) as rated_images
+                from manual_ratings
+                where task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        return {
+            "task_id": task_id,
+            "task_name": detail["name"],
+            "dataset_name": detail["dataset_name"],
+            "progress": detail["progress"],
+            "rating_count": int(row["rating_count"]),
+            "reviewer_count": int(row["reviewer_count"]),
+            "rated_images": int(row["rated_images"]),
+        }
+
+    def export_rows(self, task_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select
+                    manual_ratings.task_id,
+                    manual_ratings.image_id,
+                    dataset_images.sort_order,
+                    users.username as reviewer_username,
+                    users.display_name as reviewer_display_name,
+                    manual_ratings.sharpness_score,
+                    manual_ratings.significance_score,
+                    manual_ratings.artifact_suppression_score,
+                    manual_ratings.structure_score,
+                    manual_ratings.detail_score,
+                    manual_ratings.comment,
+                    manual_ratings.created_at,
+                    manual_ratings.updated_at
+                from manual_ratings
+                join users on users.id = manual_ratings.reviewer_id
+                join rating_tasks on rating_tasks.id = manual_ratings.task_id
+                join dataset_images
+                    on dataset_images.dataset_id = rating_tasks.dataset_id
+                   and dataset_images.image_id = manual_ratings.image_id
+                where manual_ratings.task_id = ?
+                order by dataset_images.sort_order asc, users.username asc
+                """,
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_rating(self, task_id: str, image_id: str, reviewer_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(

@@ -1,6 +1,7 @@
 from pathlib import Path
 import runpy
 import sys
+import io
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,11 +19,70 @@ class StubImageRepository:
     def list_records(self):
         return list(self._records)
 
+    def delete_image(self, image_id):
+        for index, record in enumerate(self._records):
+            if record["id"] == image_id:
+                del self._records[index]
+                return
+        raise KeyError(image_id)
+
+    def reset(self):
+        self._records = []
+
 
 def _make_client(repo: ManualRatingRepository, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(main, "manual_rating_repository", repo)
     main.app.state.manual_rating_repository = repo
     return TestClient(main.app)
+
+
+def build_manual_rating_context(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    admin = repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+    reviewer = repo.create_user(
+        username="reviewer",
+        display_name="Reviewer",
+        password_hash=hash_password("secret123"),
+        role="reviewer",
+    )
+    monkeypatch.setattr(main, "repository", StubImageRepository([
+        {"id": "img-1", "filename": "a.png", "experiment_group": "g1", "batch": "b1"},
+        {"id": "img-2", "filename": "b.png", "experiment_group": "g1", "batch": "b1"},
+    ]))
+    client = _make_client(repo, monkeypatch)
+    client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    dataset = client.post(
+        "/api/manual/datasets",
+        json={
+            "name": "Dataset A",
+            "image_ids": ["img-1", "img-2"],
+            "experiment_group": "g1",
+            "batch": "b1",
+        },
+    ).json()["dataset"]
+    task = client.post(
+        "/api/manual/tasks",
+        json={
+            "dataset_id": dataset["id"],
+            "name": "Task A",
+            "description": "",
+            "reviewer_ids": [reviewer["id"]],
+        },
+    ).json()["task"]
+    client.post("/api/auth/logout")
+    return {
+        "repo": repo,
+        "client": client,
+        "admin": admin,
+        "reviewer": reviewer,
+        "dataset_id": dataset["id"],
+        "task_id": task["id"],
+    }
 
 
 def test_auth_login_sets_session_and_me_returns_user(tmp_path, monkeypatch):
@@ -324,3 +384,81 @@ def test_manual_users_hides_password_hash(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert [user["username"] for user in response.json()["users"]] == ["admin", "reviewer"]
     assert all("password_hash" not in user for user in response.json()["users"])
+
+
+def test_reviewer_payload_is_blind_and_delete_is_blocked_for_referenced_images(tmp_path, monkeypatch):
+    context = build_manual_rating_context(tmp_path, monkeypatch)
+    client = context["client"]
+
+    login = client.post("/api/auth/login", json={"username": "reviewer", "password": "secret123"})
+    detail = client.get(f"/api/manual/tasks/{context['task_id']}/images/img-1")
+    invalid = client.put(
+        f"/api/manual/tasks/{context['task_id']}/images/img-1/rating",
+        json={
+            "sharpness_score": 7.3,
+            "significance_score": 8.0,
+            "artifact_suppression_score": 7.0,
+            "structure_score": 8.5,
+            "detail_score": 6.5,
+            "comment": "",
+        },
+    )
+    delete_attempt = client.delete("/api/images/img-1")
+
+    assert login.status_code == 200
+    assert detail.status_code == 200
+    assert "metrics" not in detail.json()["image"]
+    assert "overlay_urls" not in detail.json()["image"]
+    assert "mask_url" not in detail.json()["image"]
+    assert invalid.status_code == 422
+    assert delete_attempt.status_code == 409
+    assert delete_attempt.json()["detail"] == "image is referenced by a manual rating task"
+
+
+def test_reviewer_rating_flow_updates_progress_and_admin_can_export(tmp_path, monkeypatch):
+    context = build_manual_rating_context(tmp_path, monkeypatch)
+    client = context["client"]
+
+    reviewer_login = client.post("/api/auth/login", json={"username": "reviewer", "password": "secret123"})
+    first_next = client.get(f"/api/manual/tasks/{context['task_id']}/next")
+    put_rating = client.put(
+        f"/api/manual/tasks/{context['task_id']}/images/img-1/rating",
+        json={
+            "sharpness_score": 7.5,
+            "significance_score": 8.0,
+            "artifact_suppression_score": 7.0,
+            "structure_score": 8.5,
+            "detail_score": 6.5,
+            "comment": "ok",
+        },
+    )
+    detail_after_rating = client.get(f"/api/manual/tasks/{context['task_id']}/images/img-1")
+    second_next = client.get(f"/api/manual/tasks/{context['task_id']}/next")
+    client.post("/api/auth/logout")
+
+    admin_login = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    summary = client.get(f"/api/manual/tasks/{context['task_id']}/summary")
+    csv_export = client.get(f"/api/manual/tasks/{context['task_id']}/export/csv")
+    excel_export = client.get(f"/api/manual/tasks/{context['task_id']}/export/excel")
+
+    assert reviewer_login.status_code == 200
+    assert first_next.status_code == 200
+    assert first_next.json()["image_id"] == "img-1"
+    assert put_rating.status_code == 200
+    assert put_rating.json()["rating"]["comment"] == "ok"
+    assert detail_after_rating.status_code == 200
+    assert detail_after_rating.json()["image"]["progress"] == {"completed": 1, "total": 2}
+    assert second_next.status_code == 200
+    assert second_next.json()["image_id"] == "img-2"
+
+    assert admin_login.status_code == 200
+    assert summary.status_code == 200
+    assert summary.json()["summary"]["rating_count"] == 1
+    assert summary.json()["summary"]["rated_images"] == 1
+    assert summary.json()["summary"]["progress"] == {"completed": 0, "total": 2}
+    assert csv_export.status_code == 200
+    assert "reviewer" in csv_export.text
+    assert "img-1" in csv_export.text
+    assert "7.5" in csv_export.text
+    assert excel_export.status_code == 200
+    assert excel_export.content[:2] == b"PK"
