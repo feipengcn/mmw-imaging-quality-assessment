@@ -4,17 +4,24 @@ import json
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from .manual_rating_auth import SESSION_USER_KEY, SignedSessionMiddleware, require_logged_in, verify_password
+from .manual_rating_repository import ManualRatingRepository
 from .reports import records_to_dataframe, to_excel_bytes, to_html_report
 from .scoring import DEFAULT_WEIGHTS, normalize_weights, score_records
 from .storage import ImageRepository
 
 
 app = FastAPI(title="MMW Imaging Quality Assessment", version="0.1.0")
+app.add_middleware(
+    SignedSessionMiddleware,
+    secret_key="mmw-manual-rating-dev-secret",
+    same_site="lax",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -24,10 +31,16 @@ app.add_middleware(
 )
 
 repository = ImageRepository(Path(__file__).resolve().parents[2] / "data")
+manual_rating_repository = ManualRatingRepository(Path(__file__).resolve().parents[2] / "data" / "manual_rating.db")
 
 
 class ScoreRequest(BaseModel):
     weights: dict[str, float] | None = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 @app.get("/api/health")
@@ -169,6 +182,30 @@ def delete_image(image_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="image not found") from exc
     records = score_records(repository.list_records(), DEFAULT_WEIGHTS)
     return {"images": _with_asset_urls(records), "weights": DEFAULT_WEIGHTS}
+
+
+@app.post("/api/auth/login")
+def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
+    user = manual_rating_repository.find_user_by_username(payload.username)
+    if user is None or not user["active"] or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    session_user = {
+        key: user[key]
+        for key in ("id", "username", "display_name", "role", "active")
+    }
+    request.session[SESSION_USER_KEY] = session_user
+    return {"user": session_user}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request) -> dict[str, Any]:
+    return {"user": require_logged_in(request)}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request) -> dict[str, bool]:
+    request.session.clear()
+    return {"ok": True}
 
 
 def _with_asset_urls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
