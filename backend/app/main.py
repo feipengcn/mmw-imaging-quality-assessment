@@ -15,6 +15,7 @@ from .manual_rating_auth import (
     SignedSessionMiddleware,
     configure_user_lookup,
     get_session_secret,
+    require_admin,
     require_logged_in,
     verify_password,
 )
@@ -52,6 +53,20 @@ class ScoreRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class CreateDatasetRequest(BaseModel):
+    name: str
+    image_ids: list[str]
+    experiment_group: str = ""
+    batch: str = ""
+
+
+class CreateTaskRequest(BaseModel):
+    dataset_id: str
+    name: str
+    description: str = ""
+    reviewer_ids: list[str]
 
 
 @app.get("/api/health")
@@ -217,6 +232,62 @@ def auth_me(request: Request) -> dict[str, Any]:
 def logout(request: Request) -> dict[str, bool]:
     request.session.clear()
     return {"ok": True}
+
+
+@app.get("/api/manual/users")
+def manual_users(request: Request) -> dict[str, Any]:
+    require_admin(request)
+    users = manual_rating_repository.list_users()
+    return {
+        "users": [
+            {key: value for key, value in user.items() if key != "password_hash"}
+            for user in users
+        ]
+    }
+
+
+@app.get("/api/manual/datasets")
+def list_manual_datasets(request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return {"datasets": manual_rating_repository.list_datasets()}
+
+
+@app.post("/api/manual/datasets")
+def create_manual_dataset(request: Request, payload: CreateDatasetRequest) -> dict[str, Any]:
+    admin = require_admin(request)
+    existing_records = {record["id"]: record for record in repository.list_records()}
+    for image_id in payload.image_ids:
+        if image_id not in existing_records:
+            raise HTTPException(status_code=400, detail=f"unknown image id: {image_id}")
+
+    dataset = manual_rating_repository.create_dataset(
+        name=payload.name,
+        source="existing_images",
+        experiment_group=payload.experiment_group,
+        batch=payload.batch,
+        image_ids=payload.image_ids,
+        created_by=admin["id"],
+    )
+    return {"dataset": dataset}
+
+
+@app.post("/api/manual/tasks")
+def create_manual_task(request: Request, payload: CreateTaskRequest) -> dict[str, Any]:
+    admin = require_admin(request)
+    task = manual_rating_repository.create_task(
+        dataset_id=payload.dataset_id,
+        name=payload.name,
+        description=payload.description,
+        reviewer_ids=payload.reviewer_ids,
+        created_by=admin["id"],
+    )
+    return {"task": task}
+
+
+@app.get("/api/manual/tasks")
+def list_manual_tasks(request: Request) -> dict[str, Any]:
+    user = require_logged_in(request)
+    return {"tasks": manual_rating_repository.list_tasks_for_user(user["id"], user["role"])}
 
 
 def _with_asset_urls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

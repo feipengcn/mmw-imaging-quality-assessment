@@ -11,6 +11,14 @@ from app.manual_rating_auth import hash_password
 from app.manual_rating_repository import ManualRatingRepository
 
 
+class StubImageRepository:
+    def __init__(self, records):
+        self._records = list(records)
+
+    def list_records(self):
+        return list(self._records)
+
+
 def _make_client(repo: ManualRatingRepository, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(main, "manual_rating_repository", repo)
     main.app.state.manual_rating_repository = repo
@@ -211,3 +219,108 @@ def test_bootstrap_manual_rating_admin_works_when_invoked_from_elsewhere(tmp_pat
     created_user = repo.find_user_by_username("admin")
     assert created_user is not None
     assert created_user["role"] == "admin"
+
+
+def test_admin_can_create_dataset_and_task_from_existing_images(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    admin = repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+    reviewer = repo.create_user(
+        username="reviewer",
+        display_name="Reviewer",
+        password_hash=hash_password("secret123"),
+        role="reviewer",
+    )
+    monkeypatch.setattr(main, "repository", StubImageRepository([
+        {"id": "img-1", "filename": "a.png", "experiment_group": "g1", "batch": "b1"},
+        {"id": "img-2", "filename": "b.png", "experiment_group": "g1", "batch": "b1"},
+    ]))
+
+    client = _make_client(repo, monkeypatch)
+    login = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    dataset = client.post(
+        "/api/manual/datasets",
+        json={
+            "name": "Dataset A",
+            "image_ids": ["img-1", "img-2"],
+            "experiment_group": "g1",
+            "batch": "b1",
+        },
+    )
+    task = client.post(
+        "/api/manual/tasks",
+        json={
+            "dataset_id": dataset.json()["dataset"]["id"],
+            "name": "Task A",
+            "description": "",
+            "reviewer_ids": [reviewer["id"]],
+        },
+    )
+    tasks = client.get("/api/manual/tasks")
+
+    assert login.status_code == 200
+    assert dataset.status_code == 200
+    assert dataset.json()["dataset"]["created_by"] == admin["id"]
+    assert dataset.json()["dataset"]["image_ids"] == ["img-1", "img-2"]
+    assert task.status_code == 200
+    assert task.json()["task"]["reviewer_count"] == 1
+    assert task.json()["task"]["dataset_id"] == dataset.json()["dataset"]["id"]
+    assert tasks.status_code == 200
+    assert len(tasks.json()["tasks"]) == 1
+    assert tasks.json()["tasks"][0]["dataset_name"] == "Dataset A"
+
+
+def test_manual_admin_routes_require_admin_role(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    repo.create_user(
+        username="reviewer",
+        display_name="Reviewer",
+        password_hash=hash_password("secret123"),
+        role="reviewer",
+    )
+    monkeypatch.setattr(main, "repository", StubImageRepository([
+        {"id": "img-1", "filename": "a.png", "experiment_group": "g1", "batch": "b1"},
+    ]))
+
+    client = _make_client(repo, monkeypatch)
+    login = client.post("/api/auth/login", json={"username": "reviewer", "password": "secret123"})
+    create_dataset = client.post(
+        "/api/manual/datasets",
+        json={"name": "Dataset A", "image_ids": ["img-1"], "experiment_group": "g1", "batch": "b1"},
+    )
+    list_users = client.get("/api/manual/users")
+
+    assert login.status_code == 200
+    assert create_dataset.status_code == 403
+    assert create_dataset.json()["detail"] == "admin required"
+    assert list_users.status_code == 403
+    assert list_users.json()["detail"] == "admin required"
+
+
+def test_manual_users_hides_password_hash(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+    repo.create_user(
+        username="reviewer",
+        display_name="Reviewer",
+        password_hash=hash_password("secret123"),
+        role="reviewer",
+    )
+
+    client = _make_client(repo, monkeypatch)
+    login = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    response = client.get("/api/manual/users")
+
+    assert login.status_code == 200
+    assert response.status_code == 200
+    assert [user["username"] for user in response.json()["users"]] == ["admin", "reviewer"]
+    assert all("password_hash" not in user for user in response.json()["users"])

@@ -185,6 +185,20 @@ class ManualRatingRepository:
         user["active"] = bool(user["active"])
         return user
 
+    def list_users(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select id, username, display_name, password_hash, role, active, created_at
+                from users
+                order by created_at asc
+                """
+            ).fetchall()
+        users = [dict(row) for row in rows]
+        for user in users:
+            user["active"] = bool(user["active"])
+        return users
+
     def create_dataset(
         self,
         *,
@@ -261,7 +275,105 @@ class ManualRatingRepository:
                 "insert into task_reviewers (task_id, reviewer_id, weight) values (?, ?, ?)",
                 [(task["id"], reviewer_id, 1.0) for reviewer_id in reviewer_ids],
             )
-        return {**task, "reviewer_ids": list(reviewer_ids)}
+        return {
+            **task,
+            "reviewer_ids": list(reviewer_ids),
+            "reviewer_count": len(reviewer_ids),
+        }
+
+    def list_datasets(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            dataset_rows = connection.execute(
+                """
+                select id, name, source, experiment_group, batch, created_by, created_at
+                from datasets
+                order by created_at desc
+                """
+            ).fetchall()
+            image_rows = connection.execute(
+                """
+                select dataset_id, image_id
+                from dataset_images
+                order by sort_order asc
+                """
+            ).fetchall()
+        image_ids_by_dataset: dict[str, list[str]] = {}
+        for row in image_rows:
+            image_ids_by_dataset.setdefault(row["dataset_id"], []).append(row["image_id"])
+        return [
+            {**dict(row), "image_ids": image_ids_by_dataset.get(row["id"], [])}
+            for row in dataset_rows
+        ]
+
+    def list_tasks_for_user(self, user_id: str, role: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            if role == "admin":
+                rows = connection.execute(
+                    """
+                    select
+                        rating_tasks.id,
+                        rating_tasks.dataset_id,
+                        rating_tasks.name,
+                        rating_tasks.description,
+                        rating_tasks.status,
+                        rating_tasks.created_by,
+                        rating_tasks.created_at,
+                        datasets.name as dataset_name,
+                        count(distinct dataset_images.image_id) as total_images,
+                        count(distinct task_reviewers.reviewer_id) as reviewer_count
+                    from rating_tasks
+                    join datasets on datasets.id = rating_tasks.dataset_id
+                    left join dataset_images on dataset_images.dataset_id = datasets.id
+                    left join task_reviewers on task_reviewers.task_id = rating_tasks.id
+                    group by rating_tasks.id
+                    order by rating_tasks.created_at desc
+                    """
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    select
+                        rating_tasks.id,
+                        rating_tasks.dataset_id,
+                        rating_tasks.name,
+                        rating_tasks.description,
+                        rating_tasks.status,
+                        rating_tasks.created_by,
+                        rating_tasks.created_at,
+                        datasets.name as dataset_name,
+                        count(distinct dataset_images.image_id) as total_images,
+                        count(distinct task_reviewers.reviewer_id) as reviewer_count
+                    from rating_tasks
+                    join task_reviewers on task_reviewers.task_id = rating_tasks.id
+                    join datasets on datasets.id = rating_tasks.dataset_id
+                    left join dataset_images on dataset_images.dataset_id = datasets.id
+                    where task_reviewers.reviewer_id = ?
+                    group by rating_tasks.id
+                    order by rating_tasks.created_at desc
+                    """,
+                    (user_id,),
+                ).fetchall()
+
+            completed_rows = connection.execute(
+                """
+                select task_id, reviewer_id, count(distinct image_id) as completed_images
+                from manual_ratings
+                group by task_id, reviewer_id
+                """
+            ).fetchall()
+
+        completed_by_task: dict[str, int] = {}
+        for row in completed_rows:
+            completed_by_task[row["task_id"]] = completed_by_task.get(row["task_id"], 0) + int(row["completed_images"])
+
+        tasks = []
+        for row in rows:
+            task = dict(row)
+            task["total_images"] = int(task["total_images"])
+            task["reviewer_count"] = int(task["reviewer_count"])
+            task["completed_images"] = completed_by_task.get(task["id"], 0)
+            tasks.append(task)
+        return tasks
 
     def get_rating(self, task_id: str, image_id: str, reviewer_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
