@@ -14,6 +14,15 @@ parser.add_argument("--password", required=True)
 args = parser.parse_args()
 
 repo = ManualRatingRepository(Path("data") / "manual_rating.db")
+with repo._connect() as connection:
+    existing_admin = connection.execute(
+        "select username from users where role = ? limit 1",
+        ("admin",),
+    ).fetchone()
+
+if existing_admin is not None:
+    raise SystemExit(f"admin user already exists: {existing_admin['username']}")
+
 repo.create_user(
     username=args.username,
     display_name=args.display_name,
