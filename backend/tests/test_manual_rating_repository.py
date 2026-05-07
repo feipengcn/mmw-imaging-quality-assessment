@@ -22,6 +22,12 @@ def test_repository_initializes_schema_and_upserts_ratings(tmp_path):
         password_hash="hash",
         role="reviewer",
     )
+    other_reviewer = repo.create_user(
+        username="other-reviewer",
+        display_name="Other Reviewer",
+        password_hash="hash",
+        role="reviewer",
+    )
     dataset = repo.create_dataset(
         name="Batch A",
         source="existing_images",
@@ -89,4 +95,32 @@ def test_repository_initializes_schema_and_upserts_ratings(tmp_path):
             description="",
             reviewer_ids=[reviewer["id"]],
             created_by=admin["id"],
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.upsert_rating(
+            task_id=task["id"],
+            image_id="img-1",
+            reviewer_id=other_reviewer["id"],
+            scores={
+                "sharpness_score": 7.0,
+                "significance_score": 7.0,
+                "artifact_suppression_score": 7.0,
+                "structure_score": 7.0,
+                "detail_score": 7.0,
+            },
+            comment="unassigned reviewer",
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.upsert_rating(
+            task_id=task["id"],
+            image_id="img-999",
+            reviewer_id=reviewer["id"],
+            scores={
+                "sharpness_score": 7.0,
+                "significance_score": 7.0,
+                "artifact_suppression_score": 7.0,
+                "structure_score": 7.0,
+                "detail_score": 7.0,
+            },
+            comment="image not in dataset",
         )

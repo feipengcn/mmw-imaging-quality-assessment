@@ -87,6 +87,50 @@ class ManualRatingRepository:
                 );
                 create index if not exists idx_dataset_images_image_id on dataset_images(image_id);
                 create index if not exists idx_manual_ratings_image_id on manual_ratings(image_id);
+                create trigger if not exists manual_ratings_validate_insert
+                before insert on manual_ratings
+                for each row
+                begin
+                    select
+                        case
+                            when not exists (
+                                select 1
+                                from task_reviewers
+                                where task_id = new.task_id and reviewer_id = new.reviewer_id
+                            ) then raise(abort, 'manual rating reviewer must be assigned to task')
+                        end;
+                    select
+                        case
+                            when not exists (
+                                select 1
+                                from rating_tasks
+                                join dataset_images on dataset_images.dataset_id = rating_tasks.dataset_id
+                                where rating_tasks.id = new.task_id and dataset_images.image_id = new.image_id
+                            ) then raise(abort, 'manual rating image must belong to task dataset')
+                        end;
+                end;
+                create trigger if not exists manual_ratings_validate_update
+                before update on manual_ratings
+                for each row
+                begin
+                    select
+                        case
+                            when not exists (
+                                select 1
+                                from task_reviewers
+                                where task_id = new.task_id and reviewer_id = new.reviewer_id
+                            ) then raise(abort, 'manual rating reviewer must be assigned to task')
+                        end;
+                    select
+                        case
+                            when not exists (
+                                select 1
+                                from rating_tasks
+                                join dataset_images on dataset_images.dataset_id = rating_tasks.dataset_id
+                                where rating_tasks.id = new.task_id and dataset_images.image_id = new.image_id
+                            ) then raise(abort, 'manual rating image must belong to task dataset')
+                        end;
+                end;
                 """
             )
 
