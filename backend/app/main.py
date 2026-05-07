@@ -15,7 +15,6 @@ from .manual_rating_auth import (
     SignedSessionMiddleware,
     configure_user_lookup,
     get_session_secret,
-    require_admin,
     require_logged_in,
     verify_password,
 )
@@ -212,11 +211,6 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
 @app.get("/api/auth/me")
 def auth_me(request: Request) -> dict[str, Any]:
     return {"user": require_logged_in(request)}
-
-
-@app.get("/api/auth/admin")
-def auth_admin(request: Request) -> dict[str, Any]:
-    return {"user": require_admin(request)}
 
 
 @app.post("/api/auth/logout")

@@ -118,11 +118,8 @@ def test_auth_revalidates_activity_and_role_from_repository(tmp_path, monkeypatc
         connection.execute("update users set role = ? where username = ?", ("reviewer", "admin"))
         connection.commit()
 
-    admin_check = client.get("/api/auth/admin")
     me_after_role_change = client.get("/api/auth/me")
 
-    assert admin_check.status_code == 403
-    assert admin_check.json()["detail"] == "admin required"
     assert me_after_role_change.status_code == 200
     assert me_after_role_change.json()["user"]["role"] == "reviewer"
 
