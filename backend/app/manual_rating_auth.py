@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 import os
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException, Request
 from starlette.datastructures import MutableHeaders
@@ -14,6 +14,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 SESSION_USER_KEY = "manual_rating_user"
 PBKDF2_ITERATIONS = 120_000
 SESSION_COOKIE = "session"
+SESSION_SECRET_ENV_VAR = "MANUAL_RATING_SESSION_SECRET"
+TEST_SESSION_SECRET_FALLBACK = "manual-rating-test-fallback-secret"
+
+_user_lookup_by_username: Callable[[str], dict[str, Any] | None] | None = None
 
 
 class SignedSessionMiddleware:
@@ -54,7 +58,7 @@ class SignedSessionMiddleware:
                 elif initial_session:
                     response_headers.append(
                         "Set-Cookie",
-                        f"{SESSION_COOKIE}=null; path=/; Max-Age=0; SameSite={self.same_site}",
+                        self._clear_cookie_value(),
                     )
             await send(message)
 
@@ -89,9 +93,25 @@ class SignedSessionMiddleware:
         payload_b64 = base64.urlsafe_b64encode(payload).decode("ascii")
         signature = hmac.new(self.secret_key, payload, hashlib.sha256).hexdigest()
         cookie = f"{SESSION_COOKIE}={payload_b64}.{signature}; path=/; SameSite={self.same_site}"
+        cookie += "; HttpOnly"
         if self.https_only:
             cookie += "; Secure"
         return cookie
+
+    def _clear_cookie_value(self) -> str:
+        cookie = f"{SESSION_COOKIE}=null; path=/; Max-Age=0; SameSite={self.same_site}; HttpOnly"
+        if self.https_only:
+            cookie += "; Secure"
+        return cookie
+
+
+def get_session_secret() -> str:
+    return os.environ.get(SESSION_SECRET_ENV_VAR, TEST_SESSION_SECRET_FALLBACK)
+
+
+def configure_user_lookup(lookup_by_username: Callable[[str], dict[str, Any] | None]) -> None:
+    global _user_lookup_by_username
+    _user_lookup_by_username = lookup_by_username
 
 
 def hash_password(password: str) -> str:
@@ -108,23 +128,37 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt_hex, digest_hex = stored_hash.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(digest_hex)
     except ValueError:
         return False
-    expected = bytes.fromhex(digest_hex)
     actual = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
-        bytes.fromhex(salt_hex),
+        salt,
         PBKDF2_ITERATIONS,
     )
     return hmac.compare_digest(actual, expected)
 
 
 def require_logged_in(request: Request) -> dict[str, Any]:
-    user = request.session.get(SESSION_USER_KEY)
-    if not user:
+    session_user = request.session.get(SESSION_USER_KEY)
+    if not session_user:
         raise HTTPException(status_code=401, detail="not authenticated")
-    return user
+    username = _session_username(session_user)
+    lookup_by_username = _lookup_by_username(request)
+    if username is None or lookup_by_username is None:
+        request.session.clear()
+        raise HTTPException(status_code=401, detail="not authenticated")
+    user = lookup_by_username(username)
+    if user is None or not user["active"]:
+        request.session.clear()
+        raise HTTPException(status_code=401, detail="not authenticated")
+    request.session[SESSION_USER_KEY] = {"username": user["username"]}
+    return {
+        key: user[key]
+        for key in ("id", "username", "display_name", "role", "active")
+    }
 
 
 def require_admin(request: Request) -> dict[str, Any]:
@@ -132,3 +166,20 @@ def require_admin(request: Request) -> dict[str, Any]:
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="admin required")
     return user
+
+
+def _session_username(session_user: Any) -> str | None:
+    if isinstance(session_user, str):
+        return session_user
+    if isinstance(session_user, dict):
+        username = session_user.get("username")
+        if isinstance(username, str):
+            return username
+    return None
+
+
+def _lookup_by_username(request: Request) -> Callable[[str], dict[str, Any] | None] | None:
+    repository = getattr(request.app.state, "manual_rating_repository", None)
+    if repository is not None and hasattr(repository, "find_user_by_username"):
+        return repository.find_user_by_username
+    return _user_lookup_by_username

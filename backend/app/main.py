@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -9,7 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from .manual_rating_auth import SESSION_USER_KEY, SignedSessionMiddleware, require_logged_in, verify_password
+from .manual_rating_auth import (
+    SESSION_USER_KEY,
+    SignedSessionMiddleware,
+    configure_user_lookup,
+    get_session_secret,
+    require_admin,
+    require_logged_in,
+    verify_password,
+)
 from .manual_rating_repository import ManualRatingRepository
 from .reports import records_to_dataframe, to_excel_bytes, to_html_report
 from .scoring import DEFAULT_WEIGHTS, normalize_weights, score_records
@@ -19,8 +28,9 @@ from .storage import ImageRepository
 app = FastAPI(title="MMW Imaging Quality Assessment", version="0.1.0")
 app.add_middleware(
     SignedSessionMiddleware,
-    secret_key="mmw-manual-rating-dev-secret",
+    secret_key=get_session_secret(),
     same_site="lax",
+    https_only=os.environ.get("MANUAL_RATING_SESSION_HTTPS_ONLY") == "1",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +42,8 @@ app.add_middleware(
 
 repository = ImageRepository(Path(__file__).resolve().parents[2] / "data")
 manual_rating_repository = ManualRatingRepository(Path(__file__).resolve().parents[2] / "data" / "manual_rating.db")
+app.state.manual_rating_repository = manual_rating_repository
+configure_user_lookup(manual_rating_repository.find_user_by_username)
 
 
 class ScoreRequest(BaseModel):
@@ -193,13 +205,18 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
         key: user[key]
         for key in ("id", "username", "display_name", "role", "active")
     }
-    request.session[SESSION_USER_KEY] = session_user
+    request.session[SESSION_USER_KEY] = {"username": user["username"]}
     return {"user": session_user}
 
 
 @app.get("/api/auth/me")
 def auth_me(request: Request) -> dict[str, Any]:
     return {"user": require_logged_in(request)}
+
+
+@app.get("/api/auth/admin")
+def auth_admin(request: Request) -> dict[str, Any]:
+    return {"user": require_admin(request)}
 
 
 @app.post("/api/auth/logout")
