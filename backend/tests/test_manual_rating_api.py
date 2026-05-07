@@ -1,10 +1,12 @@
 from pathlib import Path
 import runpy
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app import manual_rating_auth
 from app.manual_rating_auth import hash_password
 from app.manual_rating_repository import ManualRatingRepository
 
@@ -138,9 +140,17 @@ def test_auth_revalidates_activity_and_role_from_repository(tmp_path, monkeypatc
     assert second_me_after_deactivation.json()["detail"] == "not authenticated"
 
 
+def test_get_session_secret_requires_env_outside_pytest(monkeypatch):
+    monkeypatch.delenv(manual_rating_auth.SESSION_SECRET_ENV_VAR, raising=False)
+    monkeypatch.delitem(sys.modules, "pytest", raising=False)
+
+    with pytest.raises(RuntimeError, match="MANUAL_RATING_SESSION_SECRET"):
+        manual_rating_auth.get_session_secret()
+
+
 def test_bootstrap_manual_rating_admin_aborts_when_admin_exists(tmp_path, monkeypatch, capsys):
-    data_dir = tmp_path / "data"
-    repo = ManualRatingRepository(data_dir / "manual_rating.db")
+    db_path = tmp_path / "manual_rating.db"
+    repo = ManualRatingRepository(db_path)
     repo.create_user(
         username="existing-admin",
         display_name="Existing Admin",
@@ -158,6 +168,8 @@ def test_bootstrap_manual_rating_admin_aborts_when_admin_exists(tmp_path, monkey
             "New Admin",
             "--password",
             "secret123",
+            "--db-path",
+            str(db_path),
         ],
     )
 
@@ -170,3 +182,32 @@ def test_bootstrap_manual_rating_admin_aborts_when_admin_exists(tmp_path, monkey
     captured = capsys.readouterr()
     assert captured.out == ""
     assert repo.find_user_by_username("new-admin") is None
+
+
+def test_bootstrap_manual_rating_admin_works_when_invoked_from_elsewhere(tmp_path, monkeypatch, capsys):
+    script_path = Path(__file__).resolve().parents[2] / "scripts" / "bootstrap-manual-rating-admin.py"
+    db_path = tmp_path / "manual_rating.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            str(script_path),
+            "--username",
+            "admin",
+            "--display-name",
+            "Admin",
+            "--password",
+            "secret123",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    runpy.run_path(str(script_path), run_name="__main__")
+
+    captured = capsys.readouterr()
+    assert "created admin admin" in captured.out
+    repo = ManualRatingRepository(db_path)
+    created_user = repo.find_user_by_username("admin")
+    assert created_user is not None
+    assert created_user["role"] == "admin"

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 from typing import Any, Callable
 
 from fastapi import HTTPException, Request
@@ -106,7 +107,14 @@ class SignedSessionMiddleware:
 
 
 def get_session_secret() -> str:
-    return os.environ.get(SESSION_SECRET_ENV_VAR, TEST_SESSION_SECRET_FALLBACK)
+    configured_secret = os.environ.get(SESSION_SECRET_ENV_VAR)
+    if configured_secret:
+        return configured_secret
+    if "pytest" in sys.modules:
+        return TEST_SESSION_SECRET_FALLBACK
+    raise RuntimeError(
+        f"{SESSION_SECRET_ENV_VAR} must be set for manual rating session signing outside tests"
+    )
 
 
 def configure_user_lookup(lookup_by_username: Callable[[str], dict[str, Any] | None]) -> None:
