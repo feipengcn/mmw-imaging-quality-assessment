@@ -36,6 +36,9 @@ class ManualRatingRepository:
                     id text primary key,
                     name text not null,
                     source text not null,
+                    source_label text not null default '',
+                    batch_label text not null default '',
+                    note_label text not null default '',
                     experiment_group text not null,
                     batch text not null,
                     created_by text not null,
@@ -133,6 +136,17 @@ class ManualRatingRepository:
                 end;
                 """
             )
+            self._ensure_column(connection, "datasets", "source_label", "text not null default ''")
+            self._ensure_column(connection, "datasets", "batch_label", "text not null default ''")
+            self._ensure_column(connection, "datasets", "note_label", "text not null default ''")
+
+    def _ensure_column(self, connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute(f"pragma table_info({table})").fetchall()
+        }
+        if column not in columns:
+            connection.execute(f"alter table {table} add column {column} {definition}")
 
     def _row_to_dict(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         return None if row is None else dict(row)
@@ -199,11 +213,22 @@ class ManualRatingRepository:
             user["active"] = bool(user["active"])
         return users
 
+    def has_admin_user(self) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select 1 from users where role = ? limit 1",
+                ("admin",),
+            ).fetchone()
+        return row is not None
+
     def create_dataset(
         self,
         *,
         name: str,
         source: str,
+        source_label: str = "",
+        batch_label: str = "",
+        note_label: str = "",
         experiment_group: str,
         batch: str,
         image_ids: list[str],
@@ -213,6 +238,9 @@ class ManualRatingRepository:
             "id": uuid.uuid4().hex,
             "name": name,
             "source": source,
+            "source_label": source_label,
+            "batch_label": batch_label,
+            "note_label": note_label,
             "experiment_group": experiment_group,
             "batch": batch,
             "created_by": created_by,
@@ -220,11 +248,19 @@ class ManualRatingRepository:
         }
         with self._connect() as connection:
             connection.execute(
-                "insert into datasets (id, name, source, experiment_group, batch, created_by, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+                """
+                insert into datasets (
+                    id, name, source, source_label, batch_label, note_label,
+                    experiment_group, batch, created_by, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     dataset["id"],
                     dataset["name"],
                     dataset["source"],
+                    dataset["source_label"],
+                    dataset["batch_label"],
+                    dataset["note_label"],
                     dataset["experiment_group"],
                     dataset["batch"],
                     dataset["created_by"],
@@ -238,7 +274,7 @@ class ManualRatingRepository:
                     for index, image_id in enumerate(image_ids)
                 ],
             )
-        return {**dataset, "image_ids": list(image_ids)}
+        return {**dataset, "image_ids": list(image_ids), "image_count": len(image_ids)}
 
     def create_task(
         self,
@@ -285,7 +321,9 @@ class ManualRatingRepository:
         with self._connect() as connection:
             dataset_rows = connection.execute(
                 """
-                select id, name, source, experiment_group, batch, created_by, created_at
+                select
+                    id, name, source, source_label, batch_label, note_label,
+                    experiment_group, batch, created_by, created_at
                 from datasets
                 order by created_at desc
                 """
@@ -301,7 +339,11 @@ class ManualRatingRepository:
         for row in image_rows:
             image_ids_by_dataset.setdefault(row["dataset_id"], []).append(row["image_id"])
         return [
-            {**dict(row), "image_ids": image_ids_by_dataset.get(row["id"], [])}
+            {
+                **dict(row),
+                "image_ids": image_ids_by_dataset.get(row["id"], []),
+                "image_count": len(image_ids_by_dataset.get(row["id"], [])),
+            }
             for row in dataset_rows
         ]
 
@@ -445,6 +487,70 @@ class ManualRatingRepository:
         }
         return detail
 
+    def list_reviewer_task_images(self, task_id: str, reviewer_id: str) -> list[dict[str, Any]]:
+        detail = self.get_task_detail(task_id, reviewer_id, "reviewer")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select
+                    dataset_images.image_id,
+                    dataset_images.sort_order,
+                    manual_ratings.id,
+                    manual_ratings.task_id,
+                    manual_ratings.reviewer_id,
+                    manual_ratings.sharpness_score,
+                    manual_ratings.significance_score,
+                    manual_ratings.artifact_suppression_score,
+                    manual_ratings.structure_score,
+                    manual_ratings.detail_score,
+                    manual_ratings.comment,
+                    manual_ratings.created_at,
+                    manual_ratings.updated_at
+                from dataset_images
+                left join manual_ratings
+                    on manual_ratings.task_id = ?
+                   and manual_ratings.image_id = dataset_images.image_id
+                   and manual_ratings.reviewer_id = ?
+                where dataset_images.dataset_id = ?
+                order by dataset_images.sort_order asc
+                """,
+                (task_id, reviewer_id, detail["dataset_id"]),
+            ).fetchall()
+
+        images = []
+        for row in rows:
+            row_dict = dict(row)
+            rating = None
+            overall_score = None
+            if row_dict["id"] is not None:
+                rating = {
+                    key: row_dict[key]
+                    for key in (
+                        "id",
+                        "task_id",
+                        "image_id",
+                        "reviewer_id",
+                        "sharpness_score",
+                        "significance_score",
+                        "artifact_suppression_score",
+                        "structure_score",
+                        "detail_score",
+                        "comment",
+                        "created_at",
+                        "updated_at",
+                    )
+                }
+                overall_score = self._overall_score(rating)
+            images.append(
+                {
+                    "image_id": row_dict["image_id"],
+                    "sort_order": int(row_dict["sort_order"]),
+                    "rating": rating,
+                    "overall_score": overall_score,
+                }
+            )
+        return images
+
     def task_summary(self, task_id: str) -> dict[str, Any]:
         detail = self.get_task_detail(task_id, "", "admin")
         with self._connect() as connection:
@@ -458,6 +564,70 @@ class ManualRatingRepository:
                 """,
                 (task_id,),
             ).fetchone()
+            reviewer_rows = connection.execute(
+                """
+                select
+                    users.id as reviewer_id,
+                    users.username as reviewer_username,
+                    users.display_name as reviewer_display_name,
+                    task_reviewers.weight,
+                    count(distinct manual_ratings.image_id) as completed_images
+                from task_reviewers
+                join users on users.id = task_reviewers.reviewer_id
+                left join manual_ratings
+                    on manual_ratings.task_id = task_reviewers.task_id
+                   and manual_ratings.reviewer_id = task_reviewers.reviewer_id
+                where task_reviewers.task_id = ?
+                group by users.id, users.username, users.display_name, task_reviewers.weight
+                order by users.username asc
+                """,
+                (task_id,),
+            ).fetchall()
+            image_rows = connection.execute(
+                """
+                select image_id, sort_order
+                from dataset_images
+                where dataset_id = ?
+                order by sort_order asc
+                """,
+                (detail["dataset_id"],),
+            ).fetchall()
+            rating_rows = connection.execute(
+                """
+                select
+                    manual_ratings.image_id,
+                    manual_ratings.sharpness_score,
+                    manual_ratings.significance_score,
+                    manual_ratings.artifact_suppression_score,
+                    manual_ratings.structure_score,
+                    manual_ratings.detail_score,
+                    task_reviewers.weight
+                from manual_ratings
+                join task_reviewers
+                    on task_reviewers.task_id = manual_ratings.task_id
+                   and task_reviewers.reviewer_id = manual_ratings.reviewer_id
+                where manual_ratings.task_id = ?
+                order by manual_ratings.image_id asc
+                """,
+                (task_id,),
+            ).fetchall()
+        ratings_by_image: dict[str, list[dict[str, Any]]] = {}
+        for row_item in rating_rows:
+            ratings_by_image.setdefault(row_item["image_id"], []).append(dict(row_item))
+
+        image_summaries = []
+        for image_row in image_rows:
+            grouped_rows = ratings_by_image.get(image_row["image_id"], [])
+            aggregates = self._aggregate_rating_rows(grouped_rows)
+            image_summaries.append(
+                {
+                    "image_id": image_row["image_id"],
+                    "sort_order": int(image_row["sort_order"]),
+                    "rating_count": len(grouped_rows),
+                    "average_overall_score": aggregates["average"]["overall_score"],
+                    "weighted_overall_score": aggregates["weighted"]["overall_score"],
+                }
+            )
         return {
             "task_id": task_id,
             "task_name": detail["name"],
@@ -466,6 +636,75 @@ class ManualRatingRepository:
             "rating_count": int(row["rating_count"]),
             "reviewer_count": int(row["reviewer_count"]),
             "rated_images": int(row["rated_images"]),
+            "reviewer_progress": [
+                {
+                    "reviewer_id": reviewer_row["reviewer_id"],
+                    "reviewer_username": reviewer_row["reviewer_username"],
+                    "reviewer_display_name": reviewer_row["reviewer_display_name"],
+                    "weight": float(reviewer_row["weight"]),
+                    "completed_images": int(reviewer_row["completed_images"]),
+                    "total_images": int(detail["progress"]["total"]),
+                }
+                for reviewer_row in reviewer_rows
+            ],
+            "image_summaries": image_summaries,
+        }
+
+    def admin_image_detail(self, task_id: str, image_id: str) -> dict[str, Any]:
+        detail = self.get_task_detail(task_id, "", "admin")
+        with self._connect() as connection:
+            image_row = connection.execute(
+                """
+                select image_id, sort_order
+                from dataset_images
+                where dataset_id = ? and image_id = ?
+                """,
+                (detail["dataset_id"], image_id),
+            ).fetchone()
+            if image_row is None:
+                raise KeyError(image_id)
+            rating_rows = connection.execute(
+                """
+                select
+                    manual_ratings.id,
+                    manual_ratings.task_id,
+                    manual_ratings.image_id,
+                    manual_ratings.reviewer_id,
+                    users.username as reviewer_username,
+                    users.display_name as reviewer_display_name,
+                    task_reviewers.weight,
+                    manual_ratings.sharpness_score,
+                    manual_ratings.significance_score,
+                    manual_ratings.artifact_suppression_score,
+                    manual_ratings.structure_score,
+                    manual_ratings.detail_score,
+                    manual_ratings.comment,
+                    manual_ratings.created_at,
+                    manual_ratings.updated_at
+                from manual_ratings
+                join users on users.id = manual_ratings.reviewer_id
+                join task_reviewers
+                    on task_reviewers.task_id = manual_ratings.task_id
+                   and task_reviewers.reviewer_id = manual_ratings.reviewer_id
+                where manual_ratings.task_id = ? and manual_ratings.image_id = ?
+                order by users.username asc
+                """,
+                (task_id, image_id),
+            ).fetchall()
+
+        ratings = []
+        for row in rating_rows:
+            item = dict(row)
+            item["weight"] = float(item["weight"])
+            item["overall_score"] = self._overall_score(item)
+            ratings.append(item)
+
+        return {
+            "task_id": task_id,
+            "image_id": image_id,
+            "sort_order": int(image_row["sort_order"]),
+            "ratings": ratings,
+            "aggregates": self._aggregate_rating_rows(ratings),
         }
 
     def export_rows(self, task_id: str) -> list[dict[str, Any]]:
@@ -576,3 +815,45 @@ class ManualRatingRepository:
                 (image_id, image_id),
             ).fetchone()
         return row is not None
+
+    def _overall_score(self, row: dict[str, Any]) -> float:
+        values = [
+            float(row["sharpness_score"]),
+            float(row["significance_score"]),
+            float(row["artifact_suppression_score"]),
+            float(row["structure_score"]),
+            float(row["detail_score"]),
+        ]
+        return round(sum(values) / len(values), 3)
+
+    def _aggregate_rating_rows(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, float | None]]:
+        fields = [
+            "sharpness_score",
+            "significance_score",
+            "artifact_suppression_score",
+            "structure_score",
+            "detail_score",
+        ]
+        if not rows:
+            empty = {field: None for field in [*fields, "overall_score"]}
+            return {"average": empty.copy(), "weighted": empty.copy()}
+
+        average: dict[str, float | None] = {}
+        weighted: dict[str, float | None] = {}
+        total_weight = sum(float(row.get("weight", 1.0)) for row in rows)
+        for field in fields:
+            average[field] = round(sum(float(row[field]) for row in rows) / len(rows), 3)
+            weighted[field] = round(
+                sum(float(row[field]) * float(row.get("weight", 1.0)) for row in rows) / total_weight,
+                3,
+            )
+
+        average["overall_score"] = round(
+            sum(self._overall_score(row) for row in rows) / len(rows),
+            3,
+        )
+        weighted["overall_score"] = round(
+            sum(self._overall_score(row) * float(row.get("weight", 1.0)) for row in rows) / total_weight,
+            3,
+        )
+        return {"average": average, "weighted": weighted}

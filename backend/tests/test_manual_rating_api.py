@@ -5,6 +5,7 @@ import io
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 import app.main as main
 from app import manual_rating_auth
@@ -34,6 +35,12 @@ def _make_client(repo: ManualRatingRepository, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(main, "manual_rating_repository", repo)
     main.app.state.manual_rating_repository = repo
     return TestClient(main.app)
+
+
+def _png_bytes(color: int = 128) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("L", (4, 4), color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def build_manual_rating_context(tmp_path, monkeypatch):
@@ -216,6 +223,27 @@ def test_get_session_secret_requires_env_outside_pytest(monkeypatch):
         manual_rating_auth.get_session_secret()
 
 
+def test_auth_bootstrap_status_reports_when_first_admin_is_needed(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    client = _make_client(repo, monkeypatch)
+
+    before = client.get("/api/auth/bootstrap-status")
+
+    repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+
+    after = client.get("/api/auth/bootstrap-status")
+
+    assert before.status_code == 200
+    assert before.json() == {"needs_setup": True}
+    assert after.status_code == 200
+    assert after.json() == {"needs_setup": False}
+
+
 def test_bootstrap_manual_rating_admin_aborts_when_admin_exists(tmp_path, monkeypatch, capsys):
     db_path = tmp_path / "manual_rating.db"
     repo = ManualRatingRepository(db_path)
@@ -386,6 +414,221 @@ def test_manual_users_hides_password_hash(tmp_path, monkeypatch):
     assert all("password_hash" not in user for user in response.json()["users"])
 
 
+def test_admin_can_create_manual_user(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+
+    client = _make_client(repo, monkeypatch)
+    login = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    response = client.post(
+        "/api/manual/users",
+        json={
+            "username": "reviewer-2",
+            "display_name": "Reviewer Two",
+            "password": "secret123",
+            "role": "reviewer",
+            "active": True,
+        },
+    )
+
+    assert login.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["user"]["username"] == "reviewer-2"
+    assert response.json()["user"]["role"] == "reviewer"
+    assert "password_hash" not in response.json()["user"]
+    assert repo.find_user_by_username("reviewer-2") is not None
+
+
+def test_admin_can_upload_files_and_create_dataset_directly(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+
+    client = _make_client(repo, monkeypatch)
+    login = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    response = client.post(
+        "/api/manual/datasets/upload",
+        data={"name": "人工评分数据集"},
+        files=[
+            ("files", ("folder-a/a.png", _png_bytes(96), "image/png")),
+            ("files", ("folder-a/b.png", _png_bytes(144), "image/png")),
+        ],
+    )
+    datasets = client.get("/api/manual/datasets")
+
+    assert login.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["dataset"]["name"] == "人工评分数据集"
+    assert response.json()["dataset"]["source"] == "folder-a"
+    assert len(response.json()["dataset"]["image_ids"]) == 2
+    assert datasets.status_code == 200
+    assert datasets.json()["datasets"][0]["source"] == "folder-a"
+
+
+def test_admin_can_upload_folder_dataset_with_optional_labels(tmp_path, monkeypatch):
+    repo = ManualRatingRepository(tmp_path / "manual_rating.db")
+    repo.create_user(
+        username="admin",
+        display_name="Admin",
+        password_hash=hash_password("secret123"),
+        role="admin",
+    )
+
+    client = _make_client(repo, monkeypatch)
+    client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    response = client.post(
+        "/api/manual/datasets/upload",
+        data={
+            "name": "文件夹导入数据集",
+            "source_label": "现场采集",
+            "batch_label": "2026-05-07 晚班",
+            "note_label": "",
+        },
+        files=[
+            ("files", ("session-1/front/a.png", _png_bytes(96), "image/png")),
+            ("files", ("session-1/front/b.png", _png_bytes(144), "image/png")),
+        ],
+    )
+    datasets = client.get("/api/manual/datasets")
+
+    assert response.status_code == 200
+    payload = response.json()["dataset"]
+    assert payload["name"] == "文件夹导入数据集"
+    assert payload["source"] == "session-1/front"
+    assert payload["source_label"] == "现场采集"
+    assert payload["batch_label"] == "2026-05-07 晚班"
+    assert payload["note_label"] == ""
+    assert payload["image_count"] == 2
+    assert datasets.status_code == 200
+    assert datasets.json()["datasets"][0]["source_label"] == "现场采集"
+    assert datasets.json()["datasets"][0]["batch_label"] == "2026-05-07 晚班"
+
+
+def test_admin_task_summary_includes_reviewer_progress(tmp_path, monkeypatch):
+    context = build_manual_rating_context(tmp_path, monkeypatch)
+    repo = context["repo"]
+    second_reviewer = repo.create_user(
+        username="reviewer-2",
+        display_name="Reviewer Two",
+        password_hash=hash_password("secret123"),
+        role="reviewer",
+    )
+    with repo._connect() as connection:
+        connection.execute(
+            "insert into task_reviewers (task_id, reviewer_id, weight) values (?, ?, ?)",
+            (context["task_id"], second_reviewer["id"], 1.5),
+        )
+        connection.commit()
+
+    client = context["client"]
+    client.post("/api/auth/login", json={"username": "reviewer", "password": "secret123"})
+    client.put(
+        f"/api/manual/tasks/{context['task_id']}/images/img-1/rating",
+        json={
+            "sharpness_score": 7.5,
+            "significance_score": 8.0,
+            "artifact_suppression_score": 7.0,
+            "structure_score": 8.5,
+            "detail_score": 6.5,
+            "comment": "ok",
+        },
+    )
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"username": "reviewer-2", "password": "secret123"})
+    client.put(
+        f"/api/manual/tasks/{context['task_id']}/images/img-1/rating",
+        json={
+            "sharpness_score": 5.0,
+            "significance_score": 6.0,
+            "artifact_suppression_score": 5.5,
+            "structure_score": 6.5,
+            "detail_score": 5.0,
+            "comment": "needs work",
+        },
+    )
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+
+    summary = client.get(f"/api/manual/tasks/{context['task_id']}/summary")
+
+    assert summary.status_code == 200
+    reviewer_progress = summary.json()["summary"]["reviewer_progress"]
+    assert len(reviewer_progress) == 2
+    assert reviewer_progress[0]["reviewer_display_name"] == "Reviewer"
+    assert reviewer_progress[0]["completed_images"] == 1
+    assert reviewer_progress[0]["total_images"] == 2
+    assert reviewer_progress[1]["reviewer_display_name"] == "Reviewer Two"
+    assert reviewer_progress[1]["completed_images"] == 1
+    assert reviewer_progress[1]["weight"] == 1.5
+
+
+def test_admin_can_view_single_image_multi_reviewer_scores_and_aggregates(tmp_path, monkeypatch):
+    context = build_manual_rating_context(tmp_path, monkeypatch)
+    repo = context["repo"]
+    second_reviewer = repo.create_user(
+        username="reviewer-2",
+        display_name="Reviewer Two",
+        password_hash=hash_password("secret123"),
+        role="reviewer",
+    )
+    with repo._connect() as connection:
+        connection.execute(
+            "insert into task_reviewers (task_id, reviewer_id, weight) values (?, ?, ?)",
+            (context["task_id"], second_reviewer["id"], 2.0),
+        )
+        connection.commit()
+    repo.upsert_rating(
+        task_id=context["task_id"],
+        image_id="img-1",
+        reviewer_id=context["reviewer"]["id"],
+        scores={
+            "sharpness_score": 8.0,
+            "significance_score": 8.0,
+            "artifact_suppression_score": 7.0,
+            "structure_score": 9.0,
+            "detail_score": 6.0,
+        },
+        comment="first",
+    )
+    repo.upsert_rating(
+        task_id=context["task_id"],
+        image_id="img-1",
+        reviewer_id=second_reviewer["id"],
+        scores={
+            "sharpness_score": 5.0,
+            "significance_score": 6.0,
+            "artifact_suppression_score": 5.0,
+            "structure_score": 6.0,
+            "detail_score": 4.0,
+        },
+        comment="second",
+    )
+
+    client = context["client"]
+    client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    response = client.get(f"/api/manual/tasks/{context['task_id']}/images/img-1/admin-detail")
+
+    assert response.status_code == 200
+    detail = response.json()["image"]
+    assert detail["image_id"] == "img-1"
+    assert detail["filename"] == "a.png"
+    assert len(detail["ratings"]) == 2
+    assert detail["ratings"][0]["reviewer_display_name"] == "Reviewer"
+    assert detail["ratings"][1]["reviewer_display_name"] == "Reviewer Two"
+    assert detail["aggregates"]["average"]["sharpness_score"] == 6.5
+    assert detail["aggregates"]["weighted"]["sharpness_score"] == pytest.approx(6.0)
+    assert detail["aggregates"]["weighted"]["overall_score"] == pytest.approx((7.6 + 2 * 5.2) / 3, rel=1e-3)
+
+
 def test_reviewer_payload_is_blind_and_delete_is_blocked_for_referenced_images(tmp_path, monkeypatch):
     context = build_manual_rating_context(tmp_path, monkeypatch)
     client = context["client"]
@@ -413,6 +656,37 @@ def test_reviewer_payload_is_blind_and_delete_is_blocked_for_referenced_images(t
     assert invalid.status_code == 422
     assert delete_attempt.status_code == 409
     assert delete_attempt.json()["detail"] == "image is referenced by a manual rating task"
+
+
+def test_reviewer_can_list_task_images_with_own_scores_only(tmp_path, monkeypatch):
+    context = build_manual_rating_context(tmp_path, monkeypatch)
+    repo = context["repo"]
+    repo.upsert_rating(
+        task_id=context["task_id"],
+        image_id="img-1",
+        reviewer_id=context["reviewer"]["id"],
+        scores={
+            "sharpness_score": 7.5,
+            "significance_score": 8.0,
+            "artifact_suppression_score": 7.0,
+            "structure_score": 8.5,
+            "detail_score": 6.5,
+        },
+        comment="ok",
+    )
+    client = context["client"]
+    client.post("/api/auth/login", json={"username": "reviewer", "password": "secret123"})
+
+    response = client.get(f"/api/manual/tasks/{context['task_id']}/images")
+
+    assert response.status_code == 200
+    images = response.json()["images"]
+    assert [image["filename"] for image in images] == ["a.png", "b.png"]
+    assert images[0]["rating"]["comment"] == "ok"
+    assert images[0]["overall_score"] == 7.5
+    assert images[1]["rating"] is None
+    assert images[1]["overall_score"] is None
+    assert "aggregates" not in images[0]
 
 
 def test_reviewer_rating_flow_updates_progress_and_admin_can_export(tmp_path, monkeypatch):

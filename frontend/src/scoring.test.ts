@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultWeights, normalizeWeights, weightSum } from './scoring';
+import { defaultWeights, formatMetric, normalizeWeights, weightSum } from './scoring';
 
 describe('score weight helpers', () => {
   it('keeps default weights normalized for the dashboard sliders', () => {
@@ -18,5 +18,9 @@ describe('score weight helpers', () => {
     expect(weightSum(weights)).toBeCloseTo(1, 5);
     expect(weights.sharpness_score).toBeCloseTo(0.4, 5);
     expect(Object.keys(weights)).toEqual(Object.keys(defaultWeights));
+  });
+
+  it('formats null metrics as placeholder instead of crashing', () => {
+    expect(formatMetric(null)).toBe('-');
   });
 });

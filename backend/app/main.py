@@ -18,6 +18,7 @@ from .manual_rating_auth import (
     SignedSessionMiddleware,
     configure_user_lookup,
     get_session_secret,
+    hash_password,
     require_admin,
     require_logged_in,
     verify_password,
@@ -61,6 +62,9 @@ class LoginRequest(BaseModel):
 class CreateDatasetRequest(BaseModel):
     name: str
     image_ids: list[str]
+    source_label: str = ""
+    batch_label: str = ""
+    note_label: str = ""
     experiment_group: str = ""
     batch: str = ""
 
@@ -70,6 +74,14 @@ class CreateTaskRequest(BaseModel):
     name: str
     description: str = ""
     reviewer_ids: list[str]
+
+
+class CreateManualUserRequest(BaseModel):
+    username: str
+    display_name: str
+    password: str
+    role: str
+    active: bool = True
 
 
 class ManualRatingRequest(BaseModel):
@@ -237,6 +249,11 @@ def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
     return {"user": session_user}
 
 
+@app.get("/api/auth/bootstrap-status")
+def auth_bootstrap_status() -> dict[str, bool]:
+    return {"needs_setup": not manual_rating_repository.has_admin_user()}
+
+
 @app.get("/api/auth/me")
 def auth_me(request: Request) -> dict[str, Any]:
     return {"user": require_logged_in(request)}
@@ -260,6 +277,19 @@ def manual_users(request: Request) -> dict[str, Any]:
     }
 
 
+@app.post("/api/manual/users")
+def create_manual_user(request: Request, payload: CreateManualUserRequest) -> dict[str, Any]:
+    require_admin(request)
+    user = manual_rating_repository.create_user(
+        username=payload.username,
+        display_name=payload.display_name,
+        password_hash=hash_password(payload.password),
+        role=payload.role,
+        active=payload.active,
+    )
+    return {"user": {key: value for key, value in user.items() if key != "password_hash"}}
+
+
 @app.get("/api/manual/datasets")
 def list_manual_datasets(request: Request) -> dict[str, Any]:
     require_admin(request)
@@ -277,12 +307,48 @@ def create_manual_dataset(request: Request, payload: CreateDatasetRequest) -> di
     dataset = manual_rating_repository.create_dataset(
         name=payload.name,
         source="existing_images",
+        source_label=payload.source_label,
+        batch_label=payload.batch_label,
+        note_label=payload.note_label,
         experiment_group=payload.experiment_group,
         batch=payload.batch,
         image_ids=payload.image_ids,
         created_by=admin["id"],
     )
     return {"dataset": dataset}
+
+
+@app.post("/api/manual/datasets/upload")
+async def upload_manual_dataset(
+    request: Request,
+    files: Annotated[list[UploadFile], File()],
+    name: Annotated[str, Form()],
+    source_label: Annotated[str, Form()] = "",
+    batch_label: Annotated[str, Form()] = "",
+    note_label: Annotated[str, Form()] = "",
+) -> dict[str, Any]:
+    admin = require_admin(request)
+    payload: list[tuple[str, bytes]] = []
+    for upload in files:
+        payload.append((upload.filename or "image", await upload.read()))
+    imported = repository.import_files(payload, "manual-rating", "manual-upload", "", "")
+    if not imported:
+        raise HTTPException(status_code=400, detail="no valid image files uploaded")
+
+    first_filename = imported[0]["filename"]
+    source = Path(first_filename).parent.as_posix() if "/" in first_filename else Path(first_filename).stem
+    dataset = manual_rating_repository.create_dataset(
+        name=name,
+        source=source or "manual-upload",
+        source_label=source_label,
+        batch_label=batch_label,
+        note_label=note_label,
+        experiment_group="manual-rating",
+        batch="manual-upload",
+        image_ids=[record["id"] for record in imported],
+        created_by=admin["id"],
+    )
+    return {"dataset": dataset, "imported": len(imported)}
 
 
 @app.post("/api/manual/tasks")
@@ -310,6 +376,28 @@ def next_manual_image(task_id: str, request: Request) -> dict[str, Any]:
     return {"image_id": manual_rating_repository.next_image_for_reviewer(task_id, user["id"])}
 
 
+@app.get("/api/manual/tasks/{task_id}/images")
+def manual_task_images(task_id: str, request: Request) -> dict[str, Any]:
+    user = require_logged_in(request)
+    try:
+        images = manual_rating_repository.list_reviewer_task_images(task_id, user["id"])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="task access denied") from exc
+    records = {record["id"]: record for record in repository.list_records()}
+    return {
+        "images": [
+            {
+                **image,
+                "filename": records.get(image["image_id"], {}).get("filename", image["image_id"]),
+                "image_url": f"/uploads/{image['image_id']}",
+            }
+            for image in images
+        ]
+    }
+
+
 @app.get("/api/manual/tasks/{task_id}/images/{image_id}")
 def manual_image_detail(task_id: str, image_id: str, request: Request) -> dict[str, Any]:
     user = require_logged_in(request)
@@ -331,6 +419,25 @@ def manual_image_detail(task_id: str, image_id: str, request: Request) -> dict[s
             "image_url": f"/uploads/{image_id}",
             "progress": detail["progress"],
             "rating": rating,
+        }
+    }
+
+
+@app.get("/api/manual/tasks/{task_id}/images/{image_id}/admin-detail")
+def manual_admin_image_detail(task_id: str, image_id: str, request: Request) -> dict[str, Any]:
+    require_admin(request)
+    try:
+        detail = manual_rating_repository.admin_image_detail(task_id, image_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="image not found in task") from exc
+    image = next((item for item in repository.list_records() if item["id"] == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail="image not found")
+    return {
+        "image": {
+            **detail,
+            "filename": image["filename"],
+            "image_url": f"/uploads/{image_id}",
         }
     }
 

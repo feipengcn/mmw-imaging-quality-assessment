@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { BarChart3, Download, FileSpreadsheet, FolderOpen, ImageUp, RotateCcw, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import { deleteImage, fetchImages, resetImages, rescoreImages, uploadImagesWithProgress, type ImportProgress } from './api';
+import ManualRatingApp from './ManualRatingApp';
 import { defaultWeights, formatMetric, formatView, metricKeys, metricLabels, normalizeWeights } from './scoring';
 import {
   filesToImportEntries,
@@ -19,6 +20,7 @@ type DirectoryInputProps = InputHTMLAttributes<HTMLInputElement> & {
 
 type OverlayMode = 'none' | 'aoi' | 'leakage' | 'stripe';
 type SampleSortMode = 'score' | 'name';
+type WorkspaceMode = 'analysis' | 'manual-rating';
 
 type SampleRow = {
   id: string;
@@ -264,6 +266,7 @@ export function buildSampleRows(
 }
 
 function App() {
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('analysis');
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeSampleRowId, setActiveSampleRowId] = useState<string | null>(null);
@@ -511,6 +514,30 @@ function App() {
     });
   }
 
+  if (workspaceMode === 'manual-rating') {
+    return (
+      <div className="app-shell">
+        <header className="topbar">
+          <div>
+            <h1>毫米波人体成像质量评估</h1>
+            <p>面向 mmWave 图像的物理指标评分与样本排序</p>
+          </div>
+          <div className="actions">
+            <div className="topbar-mode-switch" role="tablist" aria-label="工作模式">
+              <button type="button" onClick={() => setWorkspaceMode('analysis')}>
+                自动评估
+              </button>
+              <button type="button" className="active" onClick={() => setWorkspaceMode('manual-rating')}>
+                人工评分
+              </button>
+            </div>
+          </div>
+        </header>
+        <ManualRatingApp />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -519,6 +546,14 @@ function App() {
           <p>面向 mmWave 图像的物理指标评分与样本排序</p>
         </div>
         <div className="actions">
+          <div className="topbar-mode-switch" role="tablist" aria-label="工作模式">
+            <button type="button" className="active" onClick={() => setWorkspaceMode('analysis')}>
+              自动评估
+            </button>
+            <button type="button" onClick={() => setWorkspaceMode('manual-rating')}>
+              人工评分
+            </button>
+          </div>
           {apiExportLinks.map(({ href, label, icon: Icon }) => (
             <a className="icon-button text-button" href={href} key={href} target="_blank" rel="noreferrer">
               <Icon size={17} />

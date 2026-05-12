@@ -43,8 +43,8 @@ export function normalizeWeights(input: Partial<Weights>): Weights {
   }, {} as Weights);
 }
 
-export function formatMetric(value: number | undefined): string {
-  if (value === undefined || Number.isNaN(value)) return '-';
+export function formatMetric(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-';
   if (Math.abs(value) < 1) return value.toFixed(4);
   if (Math.abs(value) < 100) return value.toFixed(2);
   return value.toFixed(1);
